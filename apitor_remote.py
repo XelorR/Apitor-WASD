@@ -19,6 +19,10 @@
 --hold-timeout секунд после отпускания. Клавиша `l` включает "фиксацию":
 робот едет, пока не нажмёте стоп/другое.
 
+С флагом --key-state удержание работает "как в играх": пульт читает реальное
+состояние клавиш (Linux: evdev, Windows: WinAPI) и останавливает робота
+в момент отпускания; автоповтор и таймаут не нужны.
+
 Примеры:
 
     .venv/bin/python apitor_remote.py                # Robot R, скорость 6
@@ -39,6 +43,7 @@ import contextlib
 import json
 import logging
 import os
+import struct
 import sys
 import threading
 import time
@@ -316,12 +321,16 @@ class Remote:
         self.scan_timeout = max(2.0, args.scan_timeout)
         self.cli_address = (args.address or "").strip() or None
         self.verbose = bool(args.verbose)
+        self.want_key_state = bool(getattr(args, "key_state", False))
 
         self.robot = None
         self.move = "stop"
         self.m3_dir: Direction | None = None
         self.last_input = 0.0
         self.low_power_warned = False
+        self.key_state = False            # --key-state: слежение за клавишами работает
+        self._held_moves: list[str] = []  # зажатые сейчас направления (key-state)
+        self._keys_backend = None
 
         self.keys: asyncio.Queue = asyncio.Queue()
         self._connect_task: asyncio.Task | None = None
@@ -659,6 +668,8 @@ class Remote:
         self.latched = not self.latched
         if self.latched:
             self._say("mode", "фиксация: робот едет, пока не нажмёте пробел/другое")
+        elif self.key_state:
+            self._say("mode", "удержание: стоп в момент отпускания клавиши (key-state)")
         else:
             self._say("mode", f"удержание: авто-стоп через {self.hold_timeout:g} с после отпускания")
 
@@ -667,12 +678,55 @@ class Remote:
         try:
             while True:
                 await asyncio.sleep(0.05)
-                if self.latched or self.move == "stop" or not self._is_connected():
+                if self.latched or self.move == "stop" or not self._is_connected() or self.key_state:
                     continue
                 if time.monotonic() - self.last_input > self.hold_timeout:
                     await self._stop("клавиша отпущена")
         except asyncio.CancelledError:
             pass
+
+    # -- key-state: реальное состояние клавиш (--key-state) ------------------ #
+    async def _enable_key_state(self) -> None:
+        backend, error = make_key_state_backend(self._on_key_state, self._key_state_lost)
+        if backend is None:
+            self._say("warn", f"--key-state недоступен: {error}; работает обычное удержание")
+            return
+        error = await backend.start()
+        if error is not None:
+            self._say("warn", f"--key-state не включился: {error}; работает обычное удержание")
+            return
+        self._keys_backend = backend
+        self.key_state = True
+        self._say("info", f"key-state ({backend.name}): стоп в момент отпускания клавиши")
+        self._say("hint", "клавиши ловятся глобально — не печатайте WASD в других окнах")
+
+    async def _on_key_state(self, action: str, pressed: bool) -> None:
+        """Нажал/отпустил с реальной клавиатуры (режим --key-state)."""
+        if pressed:
+            if action in self._held_moves:
+                self._held_moves.remove(action)
+            self._held_moves.append(action)
+            await self._on_move(action)
+            return
+        if action in self._held_moves:
+            self._held_moves.remove(action)
+        if self.latched:
+            return  # фиксация: отпускание не останавливает
+        if self._held_moves:
+            await self._on_move(self._held_moves[-1])  # вернуться к другой зажатой
+        elif self.move != "stop":
+            await self._stop("клавиша отпущена")
+
+    def _key_state_lost(self, reason: str) -> None:
+        """Backend сломался на ходу: остановиться и вернуться к таймауту."""
+        if not self.key_state:
+            return
+        self.key_state = False
+        self._held_moves.clear()
+        self.last_input = time.monotonic()
+        self._say("warn", f"key-state отключился ({reason}) — дальше обычное удержание")
+        if self._is_connected() and self.move != "stop" and self._loop is not None:
+            self._loop.create_task(self._stop("key-state отключился"))
 
     # -- справка и статус ---------------------------------------------------- #
     def _print_banner(self) -> None:
@@ -680,7 +734,11 @@ class Remote:
         mode = (
             "фиксация (робот едет, пока не остановите)"
             if self.latched
-            else f"удержание (авто-стоп через {self.hold_timeout:g} с)"
+            else (
+                "удержание (стоп в момент отпускания, key-state)"
+                if self.want_key_state
+                else f"удержание (авто-стоп через {self.hold_timeout:g} с)"
+            )
         )
         self._say("info", f"скорость {self.speed}, режим: {mode}")
         self._say(
@@ -710,6 +768,9 @@ class Remote:
             "калибровка (если робот едет не туда), указывается при запуске:",
             "  --flip-left / --flip-right      развернуть соответствующее колесо",
             "  --left-motor 2 --right-motor 1  поменять колёса местами",
+            "",
+            "запуск с флагом --key-state: стоп в момент отпускания клавиши",
+            "(как в играх; Linux — /dev/input, Windows — WinAPI)",
         ):
             print(line, flush=True)
 
@@ -721,6 +782,9 @@ class Remote:
             self.move = "stop"
             self.last_input = time.monotonic()
             self._say("ok", f"подключено: {self.profile.name} ({payload})")
+            if self.key_state and self._held_moves and self._loop is not None:
+                # Клавиша была зажата ещё до коннекта — продолжить движение.
+                self._loop.create_task(self._on_move(self._held_moves[-1]))
             if not self.sim and not self.profile.calibrated:
                 self._say(
                     "hint",
@@ -738,7 +802,8 @@ class Remote:
         elif action == "disconnect":
             await self._on_disconnect_key()
         elif action in MOVE_VECTORS:
-            await self._on_move(action)
+            if not self.key_state:  # при key-state движение ведёт backend
+                await self._on_move(action)
         elif action == "stop":
             await self._stop("клавиша стоп")
         elif action == "speed_up":
@@ -822,6 +887,8 @@ class Remote:
             return 2
         self._loop = asyncio.get_running_loop()
         self._print_banner()
+        if self.want_key_state:
+            await self._enable_key_state()
         with RawTerminal():
             target = self._reader_thread_windows if IS_WINDOWS else self._reader_thread_posix
             threading.Thread(target=target, daemon=True).start()
@@ -843,6 +910,9 @@ class Remote:
                 watchdog.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await watchdog
+                if self._keys_backend is not None:
+                    await self._keys_backend.stop()
+                    self._keys_backend = None
                 if self._send_task is not None and not self._send_task.done():
                     self._send_task.cancel()
                     with contextlib.suppress(asyncio.CancelledError):
@@ -856,6 +926,205 @@ class Remote:
                 self._say("ok", "робот остановлен и отключён" if was_connected else "выход")
         print("Пока!", flush=True)
         return 0
+
+
+# --------------------------------------------------------------------------- #
+# Состояние клавиш (--key-state)
+# --------------------------------------------------------------------------- #
+# Настоящие "нажал/отпустил" в обход автоповтора, как в играх: движение
+# начинается в момент нажатия и прекращается в момент отпускания. Платформа
+# определяется автоматически: Linux — evdev (/dev/input/event*), Windows —
+# WinAPI (GetAsyncKeyState). Без флага работает обычный режим (автоповтор
+# и авто-стоп по --hold-timeout).
+
+_EVDEV_KEY_ACTION = {  # коды клавиш Linux -> действие (физические WASD, стрелки)
+    17: "fwd", 103: "fwd",      # W, ↑
+    31: "back", 108: "back",    # S, ↓
+    30: "left", 105: "left",    # A, ←
+    32: "right", 106: "right",  # D, →
+}
+# struct input_event: timeval (два машинных слова) + type, code (u16) + value (i32).
+_EVENT = struct.Struct(("ll" if struct.calcsize("l") == 8 else "qq") + "HHi")
+
+
+class EvdevKeyState:
+    """Реальное состояние клавиш через /dev/input/event* (Linux).
+
+    Читает все устройства ввода сразу (любая клавиатура) и следит только за
+    WASD и стрелками; раскладка не важна — привязка к физическим клавишам.
+    Новые устройства (например, USB-клавиатура) подхватываются на ходу.
+    """
+
+    name = "evdev"
+    RESCAN_SECONDS = 2.0
+
+    def __init__(self, on_change, on_fail) -> None:
+        self._on_change = on_change  # async (действие, нажато?)
+        self._on_fail = on_fail      # sync (причина), если пропали все устройства
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._fds: dict[int, str] = {}
+        self._rescan_task: asyncio.Task | None = None
+
+    async def start(self) -> str | None:
+        self._loop = asyncio.get_running_loop()
+        denied = self._open_devices()
+        if not self._fds:
+            if denied:
+                return ("нет доступа к /dev/input/event* — добавьте пользователя "
+                        "в группу input (sudo usermod -aG input $USER) и войдите заново")
+            return "не найдено устройств /dev/input/event*"
+        self._rescan_task = self._loop.create_task(self._rescan())
+        return None
+
+    def _open_devices(self) -> int:
+        """Открыть новые event-устройства; вернуть число отказов в доступе."""
+        denied = 0
+        for path in sorted(Path("/dev/input").glob("event*")):
+            if str(path) in self._fds.values():
+                continue
+            try:
+                fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+            except PermissionError:
+                denied += 1
+            except OSError:
+                pass
+            else:
+                self._fds[fd] = str(path)
+                self._loop.add_reader(fd, self._on_readable, fd)
+        return denied
+
+    def _on_readable(self, fd: int) -> None:
+        while True:
+            try:
+                data = os.read(fd, _EVENT.size * 64)
+            except BlockingIOError:
+                return
+            except OSError as exc:
+                self._drop(fd, f"{self._fds.get(fd, fd)}: {exc}")
+                return
+            if not data:
+                return
+            self._dispatch(data)
+
+    def _dispatch(self, data: bytes) -> None:
+        for i in range(0, len(data) - _EVENT.size + 1, _EVENT.size):
+            _, _, etype, code, value = _EVENT.unpack_from(data, i)
+            if etype != 1 or value not in (0, 1):  # EV_KEY; 2 — автоповтор ядра
+                continue
+            action = _EVDEV_KEY_ACTION.get(code)
+            if action is not None and self._loop is not None:
+                self._loop.create_task(self._on_change(action, value == 1))
+
+    def _drop(self, fd: int, reason: str) -> None:
+        with contextlib.suppress(Exception):
+            self._loop.remove_reader(fd)
+        with contextlib.suppress(OSError):
+            os.close(fd)
+        self._fds.pop(fd, None)
+        if not self._fds and self._rescan_task is not None:
+            self._rescan_task.cancel()
+            self._rescan_task = None
+            self._on_fail(f"устройства ввода пропали ({reason})")
+
+    async def _rescan(self) -> None:
+        with contextlib.suppress(asyncio.CancelledError):
+            while True:
+                await asyncio.sleep(self.RESCAN_SECONDS)
+                self._open_devices()
+
+    async def stop(self) -> None:
+        if self._rescan_task is not None:
+            self._rescan_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._rescan_task
+            self._rescan_task = None
+        for fd in list(self._fds):
+            with contextlib.suppress(Exception):
+                self._loop.remove_reader(fd)
+            with contextlib.suppress(OSError):
+                os.close(fd)
+        self._fds.clear()
+
+
+class WinApiKeyState:
+    """Реальное состояние клавиш через GetAsyncKeyState (Windows)."""
+
+    name = "WinAPI"
+    POLL_SECONDS = 0.01
+    LETTER_SCANCODE = {"fwd": 0x11, "left": 0x1E, "back": 0x1F, "right": 0x20}  # W A S D
+    LETTER_VK = {"fwd": 0x57, "left": 0x41, "back": 0x53, "right": 0x44}
+    ARROW_VK = {"fwd": 0x26, "back": 0x28, "left": 0x25, "right": 0x27}
+
+    def __init__(self, on_change, on_fail) -> None:
+        self._on_change = on_change
+        self._on_fail = on_fail
+        self._user32 = None
+        self._vk_by_action: dict[str, tuple[int, ...]] = {}
+        self._down: frozenset[str] = frozenset()
+        self._task: asyncio.Task | None = None
+
+    async def start(self) -> str | None:
+        import ctypes  # только для Windows; импорт внутри, чтобы не мешать Linux
+
+        try:
+            self._user32 = ctypes.windll.user32
+            self._user32.GetAsyncKeyState.restype = ctypes.c_short
+            self._user32.GetAsyncKeyState.argtypes = (ctypes.c_int,)
+            self._user32.GetKeyboardLayout.restype = ctypes.c_void_p
+            self._user32.GetKeyboardLayout.argtypes = (ctypes.c_uint,)
+            self._user32.MapVirtualKeyExW.restype = ctypes.c_uint
+            self._user32.MapVirtualKeyExW.argtypes = (
+                ctypes.c_uint, ctypes.c_uint, ctypes.c_void_p,
+            )
+        except Exception as exc:  # noqa: BLE001 — WinAPI может быть недоступен
+            return f"WinAPI недоступен ({exc})"
+        hkl = self._user32.GetKeyboardLayout(0)
+        vk_by_action = {}
+        for action, scancode in self.LETTER_SCANCODE.items():
+            # Скан-код -> виртуальная клавиша по текущей раскладке: физическая W
+            # работает и при русской раскладке (MAPVK_VSC_TO_VK_EX = 2).
+            vk = self._user32.MapVirtualKeyExW(scancode, 2, hkl) or self.LETTER_VK[action]
+            vk_by_action[action] = (vk, self.ARROW_VK[action])
+        self._vk_by_action = vk_by_action
+        self._task = asyncio.get_running_loop().create_task(self._poll())
+        return None
+
+    def _is_down(self, action: str) -> bool:
+        return any(
+            self._user32.GetAsyncKeyState(vk) & 0x8000
+            for vk in self._vk_by_action[action]
+        )
+
+    async def _poll(self) -> None:
+        try:
+            while True:
+                down = frozenset(a for a in self._vk_by_action if self._is_down(a))
+                for action in sorted(down - self._down):
+                    await self._on_change(action, True)
+                for action in sorted(self._down - down):
+                    await self._on_change(action, False)
+                self._down = down
+                await asyncio.sleep(self.POLL_SECONDS)
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:  # noqa: BLE001
+            self._on_fail(f"опрос клавиш сломался ({exc!r})")
+
+    async def stop(self) -> None:
+        if self._task is not None:
+            self._task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._task
+            self._task = None
+
+
+def make_key_state_backend(on_change, on_fail):
+    """Выбрать backend по платформе: (backend или None, причина отказа)."""
+    if sys.platform.startswith("linux"):
+        return EvdevKeyState(on_change, on_fail), None
+    if IS_WINDOWS:
+        return WinApiKeyState(on_change, on_fail), None
+    return None, "поддерживается только Linux (evdev) и Windows (WinAPI)"
 
 
 # --------------------------------------------------------------------------- #
@@ -880,6 +1149,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--latched", action="store_true", help="стартовать в режиме фиксации")
     parser.add_argument("--simulate", action="store_true", help="без Bluetooth: печатать кадры")
+    parser.add_argument(
+        "--key-state",
+        action="store_true",
+        help="стоп в момент отпускания клавиши, как в играх (Linux: evdev, "
+             "Windows: WinAPI); без флага — авто-стоп по --hold-timeout",
+    )
     parser.add_argument("--no-cache", action="store_true", help="не использовать кэш адреса")
     parser.add_argument("--scan-timeout", type=float, default=15.0, help="сколько секунд искать робота")
     parser.add_argument("--left-motor", type=int, choices=(1, 2, 3), default=None,
