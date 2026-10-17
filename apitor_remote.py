@@ -466,6 +466,13 @@ class Remote:
             self._say("robot", f"сканирую Bluetooth ~{self.scan_timeout:.0f} с...")
             address, name = await self._scan_for_robot()
             self._say("robot", f"нашёл {name} ({address}), подключаюсь...")
+            if promised and address != promised:
+                where = "был в кэше" if from_cache else "указан в --address"
+                self._say("warn", f"внимание: это ДРУГОЙ робот — не тот, что {where} ({promised})")
+                self._say("warn", "подключаюсь к нему; кэш будет обновлён "
+                                  "(вернуть прежнего: включить только его и снова нажать q)")
+            elif not promised and self.use_cache:
+                self._say("info", "кэш был пуст — адрес этого робота будет запомнен")
             await self._connect_to(address, timeout=self.CONNECT_TIMEOUT)
         except asyncio.CancelledError:
             raise
