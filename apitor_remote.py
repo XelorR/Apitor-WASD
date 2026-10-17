@@ -28,6 +28,7 @@
     .venv/bin/python apitor_remote.py                # Robot R, скорость 6
     .venv/bin/python apitor_remote.py --speed 9      # быстрее
     .venv/bin/python apitor_remote.py --simulate     # без Bluetooth: печать кадров
+    .venv/bin/python apitor_remote.py --key-state    # стоп в момент отпускания клавиши
     .venv/bin/python apitor_remote.py --address AA:BB:CC:DD:EE:FF
 
 Если робот едет наоборот или разворачивается не туда, откалибруйте сборку
@@ -329,6 +330,9 @@ class Remote:
         self.last_input = 0.0
         self.low_power_warned = False
         self.key_state = False            # --key-state: слежение за клавишами работает
+        self.key_state_devices = [        # --key-state-device: слушать только эти пути
+            str(p) for p in (getattr(args, "key_state_device", None) or [])
+        ]
         self._held_moves: list[str] = []  # зажатые сейчас направления (key-state)
         self._keys_backend = None
 
@@ -687,7 +691,9 @@ class Remote:
 
     # -- key-state: реальное состояние клавиш (--key-state) ------------------ #
     async def _enable_key_state(self) -> None:
-        backend, error = make_key_state_backend(self._on_key_state, self._key_state_lost)
+        backend, error = make_key_state_backend(
+            self._on_key_state, self._key_state_lost, self.key_state_devices or None
+        )
         if backend is None:
             self._say("warn", f"--key-state недоступен: {error}; работает обычное удержание")
             return
@@ -889,6 +895,8 @@ class Remote:
         self._print_banner()
         if self.want_key_state:
             await self._enable_key_state()
+        elif self.key_state_devices:
+            self._say("warn", "--key-state-device работает только вместе с --key-state")
         with RawTerminal():
             target = self._reader_thread_windows if IS_WINDOWS else self._reader_thread_posix
             threading.Thread(target=target, daemon=True).start()
@@ -958,17 +966,23 @@ class EvdevKeyState:
     name = "evdev"
     RESCAN_SECONDS = 2.0
 
-    def __init__(self, on_change, on_fail) -> None:
+    def __init__(self, on_change, on_fail, paths=None) -> None:
         self._on_change = on_change  # async (действие, нажато?)
         self._on_fail = on_fail      # sync (причина), если пропали все устройства
+        self._paths: list[str] = [str(p) for p in paths] if paths else []
         self._loop: asyncio.AbstractEventLoop | None = None
         self._fds: dict[int, str] = {}
+        self._pending: dict[int, bytes] = {}  # недобранные байты (потоковые источники)
         self._rescan_task: asyncio.Task | None = None
 
     async def start(self) -> str | None:
         self._loop = asyncio.get_running_loop()
         denied = self._open_devices()
         if not self._fds:
+            if self._paths:
+                what = ", ".join(self._paths)
+                hint = " (нет доступа — добавьте пользователя в группу input)" if denied else ""
+                return f"не удалось открыть: {what}{hint}"
             if denied:
                 return ("нет доступа к /dev/input/event* — добавьте пользователя "
                         "в группу input (sudo usermod -aG input $USER) и войдите заново")
@@ -976,10 +990,15 @@ class EvdevKeyState:
         self._rescan_task = self._loop.create_task(self._rescan())
         return None
 
+    def _candidate_paths(self) -> list[Path]:
+        if self._paths:
+            return [Path(p) for p in self._paths]
+        return sorted(Path("/dev/input").glob("event*"))
+
     def _open_devices(self) -> int:
-        """Открыть новые event-устройства; вернуть число отказов в доступе."""
+        """Открыть ещё не открытые устройства; вернуть число отказов в доступе."""
         denied = 0
-        for path in sorted(Path("/dev/input").glob("event*")):
+        for path in self._candidate_paths():
             if str(path) in self._fds.values():
                 continue
             try:
@@ -1002,9 +1021,17 @@ class EvdevKeyState:
             except OSError as exc:
                 self._drop(fd, f"{self._fds.get(fd, fd)}: {exc}")
                 return
-            if not data:
+            if not data:  # источник закрылся (EOF): дальше ждать нечего
+                self._drop(fd, f"{self._fds.get(fd, fd)}: поток закрыт")
                 return
-            self._dispatch(data)
+            # Устройства отдают только целые кадры, но потоковые источники
+            # (FIFO и т.п.) могут разрезать кадр — хвост дочитываем потом.
+            chunk = self._pending.get(fd, b"") + data
+            whole = len(chunk) - len(chunk) % _EVENT.size
+            if whole:
+                self._dispatch(chunk[:whole])
+            if whole < len(chunk):
+                self._pending[fd] = chunk[whole:]
 
     def _dispatch(self, data: bytes) -> None:
         for i in range(0, len(data) - _EVENT.size + 1, _EVENT.size):
@@ -1021,6 +1048,7 @@ class EvdevKeyState:
         with contextlib.suppress(OSError):
             os.close(fd)
         self._fds.pop(fd, None)
+        self._pending.pop(fd, None)
         if not self._fds and self._rescan_task is not None:
             self._rescan_task.cancel()
             self._rescan_task = None
@@ -1044,6 +1072,7 @@ class EvdevKeyState:
             with contextlib.suppress(OSError):
                 os.close(fd)
         self._fds.clear()
+        self._pending.clear()
 
 
 class WinApiKeyState:
@@ -1118,10 +1147,13 @@ class WinApiKeyState:
             self._task = None
 
 
-def make_key_state_backend(on_change, on_fail):
-    """Выбрать backend по платформе: (backend или None, причина отказа)."""
+def make_key_state_backend(on_change, on_fail, paths=None):
+    """Выбрать backend по платформе: (backend или None, причина отказа).
+
+    paths — конкретные устройства (`--key-state-device`); None — все event*.
+    """
     if sys.platform.startswith("linux"):
-        return EvdevKeyState(on_change, on_fail), None
+        return EvdevKeyState(on_change, on_fail, paths), None
     if IS_WINDOWS:
         return WinApiKeyState(on_change, on_fail), None
     return None, "поддерживается только Linux (evdev) и Windows (WinAPI)"
@@ -1154,6 +1186,13 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="стоп в момент отпускания клавиши, как в играх (Linux: evdev, "
              "Windows: WinAPI); без флага — авто-стоп по --hold-timeout",
+    )
+    parser.add_argument(
+        "--key-state-device",
+        action="append",
+        metavar="ПУТЬ",
+        help="следить за клавишами только с этого устройства (можно указать "
+             "несколько раз); по умолчанию — все /dev/input/event*",
     )
     parser.add_argument("--no-cache", action="store_true", help="не использовать кэш адреса")
     parser.add_argument("--scan-timeout", type=float, default=15.0, help="сколько секунд искать робота")
