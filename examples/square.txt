@@ -1,0 +1,6 @@
+# square: same program, written in English (both languages are understood)
+speed 5
+repeat 4
+forward 4
+right 2
+blink 2
