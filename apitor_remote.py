@@ -27,14 +27,14 @@
 влево/вправо, пробел — пауза, c — цвет, b — мигнуть, цифры — число шага),
 Enter — запуск. Программа пишется живой строкой; f/g — сохранить/загрузить.
 Esc — вернуться в пульт (программа остаётся), x — очистить программу,
-E — правка во внешнем редакторе ($EDITOR/$VISUAL, иначе nvim/nano/vi;
+e или E — правка во внешнем редакторе ($EDITOR/$VISUAL, иначе nvim/nano/vi;
 на время редактора горячие клавиши пульта выключены).
 Файлы простые: «вперёд 5», «вправо 2», понимаются и по-русски, и по-английски.
 
 Макрос: нажмите `m` в пульте — пульт запомнит всё, что вы делаете (движение,
 свет, мигание, смену скорости), а паузы запишет ожиданием. Esc (или `m`
 ещё раз) — остановить запись: макрос становится программой, его можно сразу
-выполнить (Enter), сохранить файлом (f/g) и править (p, Backspace, E). Это
+выполнить (Enter), сохранить файлом (f/g) и править (p, Backspace, e/E). Это
 тот же формат программы, только у действий есть точная длительность: «вперёд
 1.2с» (или «вперёд 1.2s» — пульт понимает с, s, сек, sec, секунды, seconds в
 любом интерфейсе), «пауза 0.4с», а «скорость 8» в середине файла меняет
@@ -1375,6 +1375,7 @@ class Remote:
         self.last_input = 0.0
         self.low_power_warned = False
         self.key_state = False            # слежение за реальными клавишами включилось
+        self.no_key_state = bool(getattr(args, "no_key_state", False))
         self.key_state_devices = [        # --key-state-device: слушать только эти пути
             str(p) for p in (getattr(args, "key_state_device", None) or [])
         ]
@@ -1917,7 +1918,13 @@ class Remote:
 
         Если не вышло (нет доступа к /dev/input, другая ОС) — предупреждаем
         и работаем как раньше: удержание с авто-стопом по --hold-timeout.
+        С --no-key-state слежение не включаем вовсе (и не предупреждаем):
+        нужен только автоповтор ОС и авто-стоп.
         """
+        if self.no_key_state:
+            self._say("info", tr("key-state выключен (--no-key-state): удержание с авто-стопом",
+                                 "key-state off (--no-key-state): hold with auto-stop"))
+            return
         backend, error = make_key_state_backend(
             self._on_key_state, self._key_state_lost, self.key_state_devices or None
         )
@@ -2238,7 +2245,7 @@ class Remote:
                 "  r             program repeat +1 (r5 — exactly 5 times)",
                 "  Backspace     delete the last step",
                 "  x             clear the program (stay in this mode)",
-                "  E             edit the program in $EDITOR",
+                "  e / E         edit the program in $EDITOR",
                 "  Enter         run",
                 "  Shift+Enter   run without pauses (needs key-state)",
                 "  R / T         drive the route back: backwards / robot turned",
@@ -2261,7 +2268,7 @@ class Remote:
                 "  r             повтор программы +1 (r5 — ровно 5 раз)",
                 "  Backspace     удалить последний шаг",
                 "  x             очистить программу (остаться в этом режиме)",
-                "  E             редактировать программу в $EDITOR",
+                "  e / E         редактировать программу в $EDITOR",
                 "  Enter         запустить",
                 "  Shift+Enter   запустить без пауз (нужен key-state)",
                 "  R / T         проехать маршрут обратно: задним ходом / развернув",
@@ -2397,11 +2404,11 @@ class Remote:
             "w/a/s/d — шаги · 0..9 — число · c цвет · b мигнуть · пробел пауза · "
             "] [ — скорость (цифры сразу: ]12) · r — повтор · Backspace — убрать шаг · "
             "Enter — запуск (с Shift — без пауз) · R/T — обратно · x — очистить · "
-            "E — редактор ($EDITOR) · Esc — пульт · f/g — файл · h — справка",
+            "e/E — редактор ($EDITOR) · Esc — пульт · f/g — файл · h — справка",
             "w/a/s/d — steps · 0..9 — number · c color · b blink · space pause · "
             "] [ — speed (digits right after: ]12) · r — repeat · Backspace — delete step · "
             "Enter — run (Shift — without pauses) · R/T — drive back · x — clear · "
-            "E — editor ($EDITOR) · Esc — remote · f/g — file · h — help",
+            "e/E — editor ($EDITOR) · Esc — remote · f/g — file · h — help",
         )
 
     async def _stop_if_moving(self, reason: str) -> None:
@@ -2599,7 +2606,7 @@ class Remote:
         return await self._handle_action(action)
 
     async def _handle_editor_key(self, key: str) -> bool:
-        if key == "E":
+        if key in ("e", "E"):  # маленькая e — тоже редактор (в пульте e — мотор 3)
             await self._edit_program_external()
             return True
         result = self.editor.key(key, time.monotonic())
@@ -3523,6 +3530,11 @@ def build_parser() -> argparse.ArgumentParser:
                 "watch keys only on this device (can be given several times); "
                 "by default — all /dev/input/event*"),
     )
+    parser.add_argument("--no-key-state", action="store_true",
+                        help=tr("не следить за реальными клавишами: удержание с "
+                                "авто-стопом по --hold-timeout",
+                                "do not watch real keys: hold with auto-stop "
+                                "by --hold-timeout"))
     parser.add_argument("--no-cache", action="store_true",
                         help=tr("не использовать кэш адреса", "do not use the address cache"))
     parser.add_argument("--scan-timeout", type=float, default=15.0,
