@@ -1106,6 +1106,26 @@ def _truncate(text: str, width: int) -> str:
     return text[: max(0, width - 1)] + "…"
 
 
+def _wrap_words(text: str, width: int, rows: int) -> list[str]:
+    """Разложить текст по словам на строки (не больше rows — хвост обрезаем)."""
+    lines: list[str] = []
+    current = ""
+    for word in text.split(" "):
+        if not current:
+            current = word
+        elif len(current) + 1 + len(word) <= width:
+            current += " " + word
+        else:
+            lines.append(current)
+            current = word
+    if current:
+        lines.append(current)
+    if len(lines) > rows:
+        lines = lines[:rows]
+        lines[-1] = _truncate(lines[-1] + "…", width)
+    return lines or [""]
+
+
 def _enable_windows_ansi() -> None:
     """Включить ANSI-последовательности в консоли Windows (иначе — мусор)."""
     if not IS_WINDOWS:
@@ -1119,16 +1139,18 @@ def _enable_windows_ansi() -> None:
 
 
 class Tui:
-    """Полноэкранный интерфейс пульта (--tui): статус, лог, подсказки.
+    """Полноэкранный интерфейс пульта (--tui): баннер, лог, строка программы.
 
-    Рисуется ANSI-последовательностями на альтернативном экране: сверху
-    состояние (робот, связь, скорость, режим, свет), в середине — лог
-    событий, снизу — строка программы и подсказки (или приглашение ввода).
-    Сообщения приходят в note() вместо обычной печати, поэтому вывод не
-    разъезжается по экрану; при выходе терминал возвращается как был.
+    Рисуется ANSI-последовательностями на альтернативном экране. Сверху —
+    постоянный баннер: состояние (робот, связь, скорость, режим движения,
+    key-state, свет) и клавиши текущего режима; в середине — лог событий;
+    снизу — строка программы и приглашение ввода (когда пульт что-то
+    спрашивает). Сообщения приходят в note() вместо обычной печати, поэтому
+    вывод не разъезжается по экрану; при выходе терминал возвращается как был.
     """
 
     MAX_LOG = 400  # сколько строк лога помнить
+    BANNER_ROWS = 2  # сколько строк занимает баннер с клавишами режима
     TAG_COLORS = {
         "err": "31", "warn": "33", "ok": "32", "info": "36", "hint": "2;37",
         "robot": "36", "motor": "35", "test": "36", "led": "1;33",
@@ -1225,16 +1247,35 @@ class Tui:
     # -- сборка кадра -------------------------------------------------------- #
     def _render(self, width: int, height: int) -> list[str]:
         program = self._program_line()
-        log_rows = max(1, height - 2 - (1 if program else 0))
+        prompt = self.remote.prompt is not None
+        # Шапка — постоянный баннер: состояние (строка 1) и клавиши текущего
+        # режима (строки 2+); снизу — строка программы и приглашение ввода.
+        banner = self._mode_banner(width)
+        fixed = 1 + len(banner) + (1 if program else 0)  # строка состояния + баннер
+        log_rows = max(1, height - fixed - (1 if prompt else 0))
         log = self._log_lines(width)[-log_rows:]
         rows = [self._bar(self._status_line(), width, "7")]
+        rows += [self._bar(line, width, "2") for line in banner]
         rows += [""] * max(0, log_rows - len(log))  # лог растёт снизу
         rows += log
         if program:
             rows.append(f"\x1b[2m{_truncate(program, width)}\x1b[0m")
-        rows.append(self._bar(self._prompt_line(), width,
-                              "7" if self.remote.prompt is not None else "2"))
+        if prompt:
+            rows.append(self._bar(self._prompt_line(), width, "7"))
         return rows
+
+    def _mode_banner(self, width: int) -> list[str]:
+        """Баннер шапки: какой сейчас режим и какие в нём клавиши."""
+        remote = self.remote
+        if remote.recording:
+            mode = tr("запись макроса", "recording a macro")
+        elif remote.mode == "editor":
+            mode = tr("режим программы", "program mode")
+        elif remote.mode == "run":
+            mode = tr("прогон", "run")
+        else:
+            mode = tr("пульт", "remote")
+        return _wrap_words(f"{mode}: {remote._keys_hint()}", width, self.BANNER_ROWS)
 
     @staticmethod
     def _bar(text: str, width: int, style: str) -> str:
