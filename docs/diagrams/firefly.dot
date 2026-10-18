@@ -1,0 +1,21 @@
+// Программа «светлячок»: мигнуть, цвет, пауза, цвет, поворот, мигнуть — и так 4 круга.
+// Значки одни для всех языков (как у square.dot и reverse.dot).
+// Собирается docs/build.sh в docs/img/firefly.svg
+digraph firefly {
+  graph [rankdir=LR, bgcolor="transparent", pad=0.15, nodesep=0.30, ranksep=0.42];
+  node  [fontname="Noto Sans", fontsize=15, shape=box, style="rounded,filled",
+         fillcolor="#eef3fb", color="#4a6fa5", penwidth=1.4, margin="0.20,0.12"];
+  edge  [color="#8a97a8", penwidth=1.4, arrowsize=0.8];
+
+  speed [label="» 4", fillcolor="#e8eef7", color="#6b7f9e"];
+  blink1 [label="✦ 1", fillcolor="#f3e6f7", color="#9b6bb5"];
+  c1 [label="● 3", fillcolor="#fdf0d5", color="#c99a2e"];
+  wait [label="‖ 1", fillcolor="#eef3fb", color="#4a6fa5"];
+  c2 [label="● 6", fillcolor="#e3ecf9", color="#2b5fa8"];
+  turn [label="← 2", fillcolor="#dff0d8", color="#5a9e4b"];
+  blink2 [label="✦ 2", fillcolor="#f3e6f7", color="#9b6bb5"];
+
+  speed -> blink1 -> c1 -> wait -> c2 -> turn -> blink2;
+  blink2 -> blink1 [constraint=false, style=dashed, color="#c99a2e",
+                    label="× 4", fontname="Noto Sans", fontsize=14, fontcolor="#a9791e"];
+}

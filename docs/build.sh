@@ -57,8 +57,8 @@ build_pdf() {
     --pdf-standard-font sans \
     --pdf-sans-family "Noto Sans" \
     --pdf-mono-family "Noto Sans Mono" \
-    --pdf-default-font-size 11 \
-    --pdf-mono-font-size 9 \
+    --pdf-default-font-size 13 \
+    --pdf-mono-font-size 11 \
     --pdf-page-margin-left 15 \
     --pdf-page-margin-right 15 \
     --pdf-page-margin-top 16 \

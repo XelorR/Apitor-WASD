@@ -26,6 +26,32 @@
 15. Mini dictionary — {{page:15}}
 16. Cheat sheet — {{page:16}}
 
+**How to read this manual.** Keys are typed on the keyboard, so they
+always sit in a box: `q`, `w`, `Shift+Q`. Programs can be written
+with words — like this:
+
+```
+repeat 4
+forward 4
+right 2
+```
+
+A yellow box is a hint, a red one says “careful”, a green one is a
+challenge: try it yourself. Notes like “section 5, page {{page:5}}”
+point to other pages. The ★ marks show how hard a task is:
+★ easy, ★★ think a little, ★★★ for masters.
+
+**Where to start:**
+
+| If you want to… | Open |
+|---|---|
+| just drive around | sections 3–5 |
+| teach the robot a program | sections 6–8 |
+| put on a show with light | sections 9 and 10 |
+| send the robot back along its tracks | section 12 |
+| fix something that went wrong | section 13 |
+| install and tune the remote (grown-ups) | section 14 |
+
 # 1. What the remote is
 
 The “remote” is a program on your computer. It talks to the Apitor robot
@@ -50,9 +76,43 @@ The remote is not connected to the robot yet — that happens when you
 press `q` (section 3, page {{page:3}}). If there is no welcome line at
 all, ask a grown-up: section 14, page {{page:14}}.
 
+What the remote can do:
+
+| What | How | Section |
+|---|---|---|
+| drive forward and back, spin around | `w` `s` `a` `d`, arrows | 4 |
+| change the speed, switch the boost on | `]` `[`, `Shift` | 4 |
+| light the LED up, blink, switch it off | `1`…`8`, `0`, `b` | 5 |
+| spin motor 3 (an accessory) | `v` `V` | 2 |
+| drive a program made of steps | `p`, then `Enter` | 6–8 |
+| record a trip and drive it back | `m`, `r`, `t` | 12 |
+| keep programs in files | `f`, `g`, `e` | 11 |
+
 What the remote cannot do: it does not drive the robot from far away
 (stay within a few metres), it does not replace the official app, and it
 cannot carry the robot up the stairs.
+
+The remote also tells you what is going on: the lines `[robot]`,
+`[prog]`, `[run]` are its diary. They show what the robot is doing
+right now:
+
+```
+[robot] connected: Robot R (AA:BB:CC:DD:EE:FF)
+[prog] ↑5 · →2 (2 steps · ~1.8 s · speed 6)
+[run] done: 2 steps in 1.8 s (planned 1.8 s)
+```
+
+Robots come in different shapes: `Robot R`, `J`, `S`, `Q`, `X` are
+cars, `Wheels` is a wheeled base. Inside they are alike: two wheel
+motors, an LED light and a third motor for accessories — so the
+remote works with every model.
+
+<div class="mission">
+**Challenge “First look”.** Open the remote and find three lines on
+the screen: `[robot]`, `[prog]` and `[run]`. Tell what each one
+means. Then find the `h` key — the remote will tell you about the
+keys itself.
+</div>
 
 # 2. Meet the robot
 
@@ -68,8 +128,22 @@ cannot carry the robot up the stairs.
   turns it forward, `V` turns it backward (it is a switch: press
   once to start, press again to stop).
 
+Here are the same parts in one table:
+
+| Robot part | What it is | Keys |
+|---|---|---|
+| Motor 1 and motor 2 | the left and the right wheel | `w` `s` `a` `d` |
+| LED light | the lamp in front, seen from afar | `1`…`8`, `0`, `b` |
+| Motor 3 | an axle for accessories (if you have them) | `v` `V` |
+| Control block | the “brain” and the battery | — |
+
 The robot drives “relative to itself”: `w` goes wherever its nose points.
 Turn the robot nose away from you and everything becomes obvious.
+
+<div class="mission">
+**Challenge “Robot exam”.** Point at motor 1, motor 2, motor 3, the
+LED light and the control block. Remember which key turns each one on.
+</div>
 
 # 3. The first connection
 
@@ -98,12 +172,42 @@ remembered. If the robot is switched off, the remote scans again and
 tells you about it.
 </div>
 
+| If something is wrong | What to do |
+|---|---|
+| It scans and never finds the robot | is the robot on? is the battery charged? |
+| A phone has taken the robot | close the phone app and press `q` again |
+| The wrong robot was found | `Shift+Q` and start with `--product` (section 14) |
+| It is connected but will not drive | press `w` while the remote window is active; check `]` (speed) |
+| The robot hums without moving | lower the speed: `[` |
+| Want to check who is connected | the first line of the window: `[robot] connected: …` |
+
 To disconnect, press `Shift+Q`. That is handy when the game is over: the
 robot stops and stops waiting for commands.
 
+<div class="mission">
+**Challenge “I can connect myself”.** Switch the robot on and connect
+with `q` without help. Then disconnect (`Shift+Q`) and connect again:
+the second time is faster, because the robot’s address is remembered.
+</div>
+
+**Why is the second time faster?** The remote remembers the robot’s
+address in the file `addresses.json` (section 14, page {{page:14}}),
+so `q` connects right away, without scanning. If the robot does not
+answer, the remote starts scanning again and refreshes the address.
+
+If there are several robots around (or a friend has the same one),
+tell the remote which model you need: `--product r`, `--product j` —
+and so on up to `--product w`. And `--no-cache` makes it scan from
+scratch every time.
+
+**How long to wait?** Usually two or three seconds. If fifteen have
+passed and there is no robot yet, press `q` again: the remote will
+start a new search. The battery lasts a long time, but before a long
+game it is best to put the robot on charge.
+
 # 4. How to drive
 
-![Driving keys: w — forward, s — backward, a — left, d — right, space — stop, Shift — boost](img/keys-en.svg){width=58%}
+![Driving keys: w — forward, s — backward, a — left, d — right, space — stop, Shift — boost](img/keys-en.svg){width=48%}
 
 | Keys | What they do |
 |---|---|
@@ -152,15 +256,56 @@ forward for two counts, stop, come back. Then spin a quarter turn
 * `b` or `B` — blink: the LED flashes quickly in the current colour.
   The colour itself does not change.
 
+Colours can be written into a program as well: `color 1` is red,
+`color 5` is cyan, `color 0` switches the light off. In program mode
+the key `c` walks through the colours, and `c` plus a digit picks an
+exact one: `c3` is yellow.
+
 <div class="mission">
 **Game “Traffic light”.** One player is the traffic light: yellow, red,
 green. The second player is the driver: stop on red, drive on green, get
 ready on yellow. Then swap.
 </div>
 
+<div class="mission">
+**Challenge “Garland”.** In program mode collect: `color 1`, `space`,
+`color 4`, `space`, `color 3`, `space` — and press `Enter`. The robot
+stands still and blinks three colours, like a garland on a tree.
+</div>
+
+For example, this little traffic-light program:
+
+```
+color 1
+pause 1
+color 4
+pause 1
+color 0
+```
+
+The robot stands in red, then in green, and then switches the light
+off — and you can drive on. The colour stays on until you press
+another one, just like a real toy car with a flashing light.
+
+Where to press what — to avoid confusion:
+
+| I want to | In the remote | In a program |
+|---|---|---|
+| light a colour | digits `1`…`8` | the step `color 4` or `c4` |
+| switch the light off | `0` | the step `color 0` |
+| blink | `b` or `B` | the step `blink` (or `b`) |
+| walk through the colours | — | the `c` key |
+
+<div class="tip">
+A blink does not change the colour: `b` flashes whatever is on
+right now. And digits in program mode do not light anything up —
+they land in a step: `c3` means “light up yellow”, not “light up
+now”.
+</div>
+
 # 6. Three remote modes
 
-![The three modes: remote, program, run — and the keys that move you between them](img/modes-en.svg){width=62%}
+![The three modes: remote, program, run — and the keys that move you between them](img/modes-en.svg){width=52%}
 
 * **Remote** — the keys drive the robot (sections 4 and 5, pages {{page:4}}
   and {{page:5}}).
@@ -201,11 +346,14 @@ colour. You collect them in the program mode (press `p`).
 | `b` | blink |
 | `c` | next colour; `c` plus a digit picks an exact colour (`c3` — yellow) |
 | `]` `[` | program speed (digits right after: `]12`) |
-| `r` | repeat the whole program: `r` cycles 1→2→…, `r5` runs it 5 times |
+| `*` (star, `Shift`+`8`) | repeat the whole program: `*` cycles 1→2→…, `*5` runs it 5 times |
 | `Backspace` | delete the last step |
 | `x` | clear the whole program |
 | `Enter` | start it |
 | `Esc` | back to the remote |
+
+The keys `r` `R` `t` `T` work in this mode too: the robot drives the
+route back, and the program stays where it is (section 12).
 
 Under the prompt the remote shows your program as symbols:
 
@@ -249,11 +397,13 @@ program mode:
 w4      forward 4
 d2      spin right 2
 b2      blink 2
-r4      repeat everything four times
+*4      repeat everything four times
 ```
 
-Press `Enter` — and away it goes. The very same program can be written
-with words in a program file (section 11, page {{page:11}}):
+Press `Enter` — and away it goes. The key `*` (the star) repeats the
+whole program, and the digit after it says how many times: `*4`
+means four laps. The very same program can be written with words in
+a program file (section 11, page {{page:11}}):
 
 ```
 repeat 4
@@ -275,6 +425,21 @@ tiles.
 yourself against the `[prog]` line.
 </div>
 
+**Why is it a square?** The turn `right 2` is about a quarter circle,
+90°. Four turns together make 360°, a full circle, so the robot comes
+back to where it started. Put `right 1` and the robot turns only an
+eighth — and the square turns into a crooked heptagon. Maths!
+
+<div class="mission">
+**Challenge “Rectangle”.** Make two sides long and two short:
+`forward 8`, `right 2`, `forward 4`, `right 2` and `*2` at the end.
+Explain why repeating twice was enough.
+</div>
+
+The `[prog]` line shows the length of the program: `(3 steps ·
+~4.2 s)`. So four laps take about sixteen seconds — just enough time
+to count to sixteen and check on the robot.
+
 # 9. The “Firefly” program
 
 Now a dance with light: the robot spins while the LED changes colour.
@@ -294,6 +459,25 @@ blink 2
 
 What happens: the robot blinks yellow, waits, flashes blue, waits, spins
 left and blinks once more — four times around. A little show.
+
+![The “Firefly” scenario: blink, yellow, pause, blue, turn, blink — and four laps](img/firefly.svg){width=100%}
+
+| Step | What the robot does |
+|---|---|
+| `speed 4` | drives slower: the dance comes out smooth |
+| `repeat 4` | runs the whole program four times |
+| `blink 1` | flashes in the current colour |
+| `color 3` | lights up yellow |
+| `pause 1` | stands for a second |
+| `color 6` | lights up blue |
+| `left 2` | spins on the spot |
+| `blink 2` | blinks twice |
+
+<div class="mission">
+**Challenge “Your own firefly”.** Change the colours and pauses to
+your own and make a show of four laps. Try `speed 8` and then
+`speed 2` — the dance comes out completely different.
+</div>
 
 <div class="tip">
 A colour change is a step too: the robot changes the light not
@@ -322,12 +506,39 @@ masters.
 
 Hints (open them only if you are really stuck):
 
+8. ★★ **The figure of eight.** Two circles in opposite directions —
+   an infinity sign.
+9. ★★ **The patrol.** Drive around the room and come back to the
+   same spot with the key `r`.
+10. ★★★ **The repeater.** Drive around, record the trip as a macro
+    (`m`, stop with `Esc`) and send the robot home with `r`.
+
+Hints (open them only if you are really stuck):
+
 * The snake: `w3 d1 w3 a1` — and repeat a few times.
 * Two squares: put `repeat 2` at the very beginning of the program.
 * The staircase: tune the turn number until you get a neat quarter turn
   (start with `d2`).
 * The race: accelerate on the straight and press `space` before the
   target.
+* The figure of eight: a circle left (`w2 a2`), a circle right
+  (`w2 d2`) — and repeat.
+* The patrol: drive back the way you came — or just press `r`.
+
+**Challenge diary.** Write down what worked (and when):
+
+| No. | Challenge | Done |
+|---|---|---|
+| 1 | The straight line | ☐ |
+| 2 | Traffic light | ☐ |
+| 3 | The snake | ☐ |
+| 4 | Two squares | ☐ |
+| 5 | The dance | ☐ |
+| 6 | The boosted race | ☐ |
+| 7 | The staircase | ☐ |
+| 8 | The figure of eight | ☐ |
+| 9 | The patrol | ☐ |
+| 10 | The repeater | ☐ |
 
 # 11. Program files and the editor
 
@@ -353,10 +564,30 @@ right 2
 blink 2
 ```
 
-In a file you can use words (`forward`, `right`, `pause`, `blink`,
-`color 3`, `repeat 4`, `speed 5`), the symbols (`↑5 · →2 · ✦2`) and
-comments after `#`. The remote understands both English and Russian words
-at once.
+Every word the remote understands:
+
+| Word | Symbol | Meaning |
+|---|---|---|
+| `forward`, `вперёд`, `up` | `↑` | drive forward |
+| `back`, `назад`, `down` | `↓` | drive backward |
+| `left`, `влево` | `←` | turn left |
+| `right`, `вправо`, `rght` | `→` | turn right |
+| `pause`, `пауза` | `‖` | stand still |
+| `blink`, `мигнуть` | `✦` | blink |
+| `color 3`, `цвет 3` | `●3` | change the colour |
+| `repeat 4`, `повтор 4` | — | run everything four times |
+| `speed 5`, `скорость 5` | `»5` | change the speed from here |
+| `forward 1.2s`, `вперёд 1.2с` | `↑1.2s` | drive for exactly 1.2 seconds |
+
+Anything after `#` is a comment: the remote does not read it. Big and
+small letters, `ё` and `е`, commas and `×` are all forgiven. And it
+understands English and Russian words at once.
+
+<div class="mission">
+**Challenge “Out and back by file”.** Collect the square, save it
+with `f` as `square2.txt`, clear it (`x`) and load it again with `g`.
+Then press `e` and add the line `color 5` at the very top.
+</div>
 
 <div class="tip">
 The program you collected will not be lost even if you close the remote:
@@ -413,10 +644,17 @@ keys for that:
 
 The duration is kept: if the robot drove for 2 seconds on the way out,
 it drives for 2 seconds on the way back as well (numbers like `↑5`
-become seconds). The light, too: a stretch driven with the light-blue
-colour is driven back with the same light-blue — the colour just
-switches at another moment, when you reach that stretch (in the picture
-`●5`, `●3`, `●1` stand in a different order).
+become seconds).
+
+**The speed and the colour switch exactly where you changed them.**
+You drive at 6 first, then switch to 12 and finish the route — on
+the way back the robot starts at 12 right away (that stretch was
+driven at 12), and at the turning point it switches back to 6 and
+keeps it to the end. The colour works the same way: a stretch driven
+in cyan is driven back in cyan, and the colour switches exactly when
+you reach that stretch (in the picture `●5`, `●3`, `●1` stand in a
+different order). Stretches that ran “with whatever was lit” get the
+colour that was on before the run.
 
 <div class="tip">
 `Shift+Enter` drives the program without pauses, and `R` or `T` (`Shift`
@@ -424,6 +662,9 @@ with `r` or `t`) does the same on the way back. Capitals come by
 themselves, and `Shift+Enter` is learned from the terminal itself
 (kitty, foot, alacritty and others) — or from the keyboard tracking,
 when it is on (a grown-up knows what that is: section 14, page {{page:14}}).
+
+The way back works from program mode too: type the steps, press `r`
+(or `t`) — the robot drives, and the program stays where it is.
 </div>
 
 The way back does not spoil the program: it is built on the fly, so
@@ -431,6 +672,62 @@ after it `Enter` drives forward again and `p` shows the old steps. And
 `repeat` has nothing to do with it: back the robot always drives once —
 after the first pass it already stands at the start of the route and
 looks the other way.
+
+<div class="mission">
+**Challenge “Out and back”.** Drive a route with two speeds and two
+colours, record it as a macro and come back with `r`. Look at the
+`[run]` lines: you can see the robot started the way back at the last
+speed.
+</div>
+
+All four keys side by side:
+
+| Keys | What the robot does |
+|---|---|
+| `r` | drives the route back, backwards |
+| `t` | the same, but forward — for a robot you turned by hand |
+| `R` `T` | the same without pauses, in one go |
+
+In the log you can see it in the `[run]` lines:
+
+```
+[run] start: 9 steps · speed 6 · reversed (driving backwards)
+[run] ▶ »12
+[run] ▶ ↓0.6s
+[run] ▶ ↓0.6s
+[run] ▶ ↑0.6s
+[run] ▶ »6
+[run] ▶ ←0.6s
+[run] done: 9 steps in 4.6 s
+```
+
+Speed 12 stands at the very beginning for a reason: it was put
+exactly where it changed in the original program.
+
+While the recording is running the window shows lines like these:
+
+```
+[rec] recording a macro: driving, light, speed are all recorded,
+      pauses become waits; Esc or n — stop
+[rec] … do something (Esc or n — stop)
+```
+
+And when you stop the recording — how many steps you collected:
+
+```
+[rec] macro recorded: 7 steps · 5.4 s — Enter — drive, r/t — back,
+      f — save, p — edit
+```
+
+**What to try with the way back:**
+
+* The letter “U”: forward, turn, forward, turn, forward — then press
+  `r` and the robot drives the letter backwards by itself.
+* A traffic-light track: write `color 1` at the start and `color 5`
+  at the end of the route — on the way back the colours come in a
+  different order.
+* A long trip: write `speed 12` in the middle of the file — on the
+  way back the robot drives fast first and comes home slowly.
 
 # 13. If something is wrong
 
@@ -444,6 +741,34 @@ looks the other way.
 | The robot stopped in the middle of a program | `space` was pressed (pause) — press it again |
 | Everything is frozen | `Ctrl+C`: the remote stops the motors and quits |
 | Not sure what to press | `h` — help; `Esc` — back to the remote |
+| `[err] the program was not changed` | there is a typo in the file: press `e` and look |
+| A file is missing in the `g` list | check the `programs/` folder (section 14, page {{page:14}}) |
+| The robot blinks and does not drive | `space` was pressed — press it again |
+| The light is different after a program | that is on purpose: the old colour comes back after the finish |
+| The program ran in a strange way | press `p` and look at the steps; `x` clears them |
+| The robot drove under the sofa | `Esc` — stop; then reach it by hand or reconnect with `q` |
+| The program goes on forever | check `repeat`: the number at the start of the program |
+| The light blinks by itself | that is a blink step (`✦`) from the program — wait or press `Esc` |
+
+**First aid, step by step.** If the robot behaves strangely:
+
+1. Press `Esc` — the remote stops the robot. This is safe at any moment.
+2. Look at the last line in the window: it says what happened.
+3. Press `h` for help, `j` for the run journal, `q` to reconnect.
+4. If nothing helps at all: `Ctrl+C` and start the remote again.
+
+**If the robot has driven far away.** Press `Esc` — the remote stops
+it instantly, wherever it is. Then there are three ways to bring the
+robot home: drive it yourself (just `w` in the right direction),
+press `r` (the robot returns along its tracks) or `t` if you have
+managed to turn it by hand. And if the robot has left the room
+altogether — `q` to reconnect and `y` to check the motors.
+
+<div class="tip">
+Almost everything is cured by three things: `Esc`, `q` and `Ctrl+C`.
+Press them boldly — the robot will not break, and the remote always
+stops the motors before quitting.
+</div>
 
 # 14. For grown-ups: install, flags, tuning
 
@@ -490,6 +815,10 @@ Useful flags (the full list is in the README):
 | Flag | Why |
 |---|---|
 | `--speed 6` | starting speed 1…12 |
+| `--product r` | robot model: `r`, `j`, `s`, `q`, `x`, `w` |
+| `--tui` | full-screen interface with a banner and the journal |
+| `--no-cache` | do not use the saved robot address |
+| `--simulate` | no robot: print the frames that would be sent |
 | `--latched` | start in the latched mode |
 | `--program-dir DIR` | where program files live (default `programs/`) |
 | `--step-time` `--turn-time` `--pause-time` `--blink-time` | step durations, s (0.6 / 0.6 / 1.0 / 0.25) |
@@ -524,6 +853,38 @@ docs/build.sh
 It needs `pandoc`, `graphviz`, `calibre` and `pdftotext` (poppler) — see
 `docs/README.md`.
 
+A check without a robot (handy right after the install):
+
+```bash
+.venv/bin/python apitor_remote.py --simulate
+```
+
+The remote prints the frames it would send to the robot — you can see
+what would happen, and no robot is needed.
+
+**FAQ.**
+
+| Question | Answer |
+|---|---|
+| The robot is never found | is it on? charged? is a phone holding it? is Bluetooth on? |
+| The remote warns about the keyboard | add the user to the `input` group, or start with `--no-key-state` |
+| Timer stops are not wanted | enable keyboard tracking (the `input` group) or lower `--hold-timeout` |
+| Where is the run journal | `~/.config/apitor-control/runs.log` (flag `--log`) |
+| How to start from scratch | delete the files in `~/.config/apitor-control/` — the remote recreates them |
+| Starting without a terminal | double-click `run.sh` / `run.bat` |
+| Where to take example programs | the `examples/` folder, for instance `examples/square.txt` |
+
+All the settings live in the folder `~/.config/apitor-control/`:
+
+| File | What is inside |
+|---|---|
+| `addresses.json` | robot addresses: so that `q` connects at once |
+| `config.json` | language, step durations, program folder, journal |
+| `runs.log` | the run journal (switched on with `--log`) |
+
+Deleting these files is the easiest way to “reset” the remote to
+factory settings: it recreates them on the next launch.
+
 # 15. Mini dictionary
 
 * **Remote** — the program that drives the robot from your keyboard (section 1, page {{page:1}}).
@@ -532,12 +893,37 @@ It needs `pandoc`, `graphviz`, `calibre` and `pdftotext` (poppler) — see
 * **Step** — one action of a program: drive, turn, blink (section 7, page {{page:7}}).
 * **Program** — a list of steps the robot performs by itself (section 7, page {{page:7}}).
 * **Run** — performing the program from start to finish (section 6, page {{page:6}}).
-* **Repeat** — how many times the whole program runs (`r` or `repeat`, section 8, page {{page:8}}).
+* **Repeat** — how many times the whole program runs (`*` or `repeat`, section 8, page {{page:8}}).
 * **Hold** — the mode where the robot drives while you hold the key (section 4, page {{page:4}}).
 * **Latched** — the mode where the robot drives until you press `space` (section 4, page {{page:4}}).
 * **Boost** — speeding up to 12 while `Shift` is held (section 14, page {{page:14}}).
 * **Draft** — the program the remote remembers between launches (section 11, page {{page:11}}).
 * **Terminal** — the window where the remote lives; keys are pressed in it (section 1, page {{page:1}}).
+* **Speed** — a number from 1 (very slow) to 12 (fast); `]` and `[` change it (section 4, page {{page:4}}).
+* **The light** — the robot’s LED; colours `1`…`8`, and `0` switches it off (section 5, page {{page:5}}).
+* **Motor 3** — the third axle for accessories; `v` starts it, `V` stops it (section 2, page {{page:2}}).
+* **Symbol** — a short way to write a step: `↑5`, `‖`, `✦2`, `●3` (section 7, page {{page:7}}).
+* **Program file** — a text file with steps in the `programs/` folder (section 11, page {{page:11}}).
+* **Comment** — a note after `#`; the remote does not read it (section 11, page {{page:11}}).
+* **Second** — write a number with a letter: `1.2s` instead of “some steps” (section 7, page {{page:7}}).
+* **Challenge** — a task with ★ marks; there are ten of them (section 10, page {{page:10}}).
+* **Way back** — the same route from the end (`r`, `t`, section 12, page {{page:12}}).
+* **Recording** — a macro runs until you press `Esc` or `n` (section 12, page {{page:12}}).
+* **Editor** — program mode, where the steps are typed with keys (section 7, page {{page:7}}).
+* **Pause** — a step where the robot stands still and does nothing (section 7, page {{page:7}}).
+* **Cache** — the saved robot address: that is why `q` finds it at once (section 3, page {{page:3}}).
+* **Frame** — a command the remote sends to the robot over Bluetooth (section 14, page {{page:14}}).
+* **Model** — which robot this is: R, J, S, Q, X or Wheels (section 1, page {{page:1}}).
+* **Journal** — the records of runs; the last lines are shown by `j` (section 14, page {{page:14}}).
+* **The square** — the first real program: four turns (section 8, page {{page:8}}).
+* **The firefly** — a dance program: turns and coloured flashes (section 9, page {{page:9}}).
+* **Vocabulary** — every word a program file understands (section 11, page {{page:11}}).
+* **Flag** — a word after the program name on the command line: `--tui`, `--simulate` (section 14, page {{page:14}}).
+* **Simulation** — the mode without a robot: frames are printed, nobody is scanned (section 14, page {{page:14}}).
+* **Robot address** — its Bluetooth “name”; the remote remembers it, so `q` is quick (section 3, page {{page:3}}).
+* **STOP** — `space` or `Esc`: the robot freezes and drives no more (section 4, page {{page:4}}).
+* **To blink** — to flash the light briefly (the `b` key; section 5, page {{page:5}}).
+* **Diagram** — a picture in this manual; the sources live in `docs/diagrams/` (section 14, page {{page:14}}).
 
 # 16. Cheat sheet
 
@@ -568,11 +954,11 @@ It needs `pandoc`, `graphviz`, `calibre` and `pdftotext` (poppler) — see
 | `Ctrl+C` | quit |
 
 **Program mode:** `w/a/s/d` — steps · digits — how many times ·
-`space` — pause · `b` — blink · `c` — colour · `r` — repeat ·
+`space` — pause · `b` — blink · `c` — colour · `*` — repeat ·
 `]` `[` — speed · `Backspace` — delete a step · `x` — clear ·
 `Enter` — start (with `Shift` — without pauses) · `Esc` — to the remote.
-**The way back:** `R` — backwards, without pauses, `t` `T` — forward
-(the small `r` in the editor is the repeat; with pauses — `r` in the remote).
+**The way back:** `r` `t` — backwards / turned around, `R` `T` — the
+same without pauses; works from the remote and from the editor.
 
 **Run:** `space` — pause/resume · `Esc` — stop · `p` — edit.
 After a run: `Enter` — once more, `r` `t` — back.
@@ -586,6 +972,70 @@ forward 4
 right 2
 blink 2
 ```
+
+**In one line** (the most needed):
+
+```
+q connect · w a s d drive · space STOP · ] [ speed ·
+1…8 colour · b blink · p program · Enter run · r t back ·
+m macro · f g file · e editor · h help · Ctrl+C quit
+```
+
+**What to write in a program file:** `forward 4` · `back 2` ·
+`left 1` · `right 2` · `pause 1` · `blink 2` · `color 3` ·
+`repeat 4` · `speed 5` · `forward 1.5s`. The remote understands
+Russian words too: `вперёд`, `назад`, `влево`, `вправо`, `пауза`,
+`мигнуть`, `цвет 3`, `повтор 4`, `скорость 5`. Anything after `#`
+is a comment.
+
+**If you forgot a key.** Press `h` — the remote shows the help.
+The `h` key works in program mode as well: there is a help of its
+own. And `j` shows the run journal: what the robot did and how long
+it took.
+
+**A mini program to memorise** (a square with light):
+
+```
+speed 5
+repeat 4
+forward 4
+right 2
+blink 2
+```
+
+How to run it: press `p`, type the steps (or load a file with `g`)
+and press `Enter`.
+
+**Three useful habits:**
+
+1. Before a run look at `[prog]`: how many steps and which speed.
+2. After a run press `j`: the journal shows how long it took.
+3. Point the robot’s nose away from you: then `w` means “forward”.
+
+**Where to go next.** The `examples/` folder holds ready programs
+(the square, the firefly and others) — press `g` and choose one. You
+can also race a friend: set up skittles and drive the track without
+knocking any down. The fastest one gets to command the robot!
+
+**Three rescue keys:**
+
+| Key | When it saves you |
+|---|---|
+| `Esc` | the robot is doing something wrong — an instant STOP |
+| `q` | the link is lost — connect again |
+| `Ctrl+C` | the remote is frozen — stop the motors and quit |
+
+**Pilot check:**
+
+| I can | ☐ |
+|---|---|
+| connect and disconnect (`q`, `Shift+Q`) | ☐ |
+| drive, turn and change the speed | ☐ |
+| light any colour and blink | ☐ |
+| collect a program and run it | ☐ |
+| record a macro and come back with `r` | ☐ |
+| save a program and load it | ☐ |
+| show the remote to a friend | ☐ |
 
 <div class="tip">
 More programs and examples are in the `examples/` folder. A pilot who
