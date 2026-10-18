@@ -10,12 +10,15 @@
     0 ............ выключить подсветку
     b / B ........ мигнуть подсветкой (цвет при этом не меняется)
     e / Shift+E .. мотор 3 (аксессуар): вперёд / назад (тумблером)
+    Enter ........ выполнить программу (записанный макрос или файл)
+    Shift+Enter .. то же, но без пауз (Shift виден только с key-state)
     p ............ режим программы (шаги, как у Big Trak / Лунохода)
-    m ............ записать макрос: делайте что угодно, Enter — стоп
-    R ............ в пульте: запустить последнюю программу (если была)
+    m ............ записать макрос: делайте что угодно, Esc — стоп
+    r / R ........ проехать маршрут обратно задним ходом (R — без пауз)
+    t / T ........ робота развернули рукой: проехать обратно передом
     F / G ........ сохранить / загрузить программу файлом
     J ............ журнал прогонов вкл/выкл
-    t ............ тест-поездка (проверить направления)
+    y ............ тест-поездка (проверить направления)
     i ............ моторы по одному (калибровка)
     k / l ........ режим движения: удержание / фиксация
     h, ? ......... справка              Ctrl+C ....... выход
@@ -29,14 +32,22 @@ E — правка во внешнем редакторе ($EDITOR/$VISUAL, ин
 Файлы простые: «вперёд 5», «вправо 2», понимаются и по-русски, и по-английски.
 
 Макрос: нажмите `m` в пульте — пульт запомнит всё, что вы делаете (движение,
-свет, мигание, смену скорости), а паузы запишет ожиданием. Enter (или `m`
+свет, мигание, смену скорости), а паузы запишет ожиданием. Esc (или `m`
 ещё раз) — остановить запись: макрос становится программой, его можно сразу
-запустить (R), сохранить файлом (f/g) и править (p, Backspace, E). Это тот же
-формат программы, только у действий есть точная длительность: «вперёд 1.2с»
-(или «вперёд 1.2s» — пульт понимает с, s, сек, sec, секунды, seconds в любом
-интерфейсе), «пауза 0.4с», а «скорость 8» в середине файла меняет скорость
-по ходу. В редакторе такие шаги видны как ↑1.2с, ‖0.4с и »8; шаги и секунды
-спокойно соседствуют в одной программе.
+выполнить (Enter), сохранить файлом (f/g) и править (p, Backspace, E). Это
+тот же формат программы, только у действий есть точная длительность: «вперёд
+1.2с» (или «вперёд 1.2s» — пульт понимает с, s, сек, sec, секунды, seconds в
+любом интерфейсе), «пауза 0.4с», а «скорость 8» в середине файла меняет
+скорость по ходу. В редакторе такие шаги видны как ↑1.2с, ‖0.4с и »8; шаги и
+секунды спокойно соседствуют в одной программе.
+
+Обратный проезд: `r` — робот едет по тому же маршруту в обратном порядке
+задним ходом (реверс и вперёд/назад, и влево/вправо), `t` — то же, но робота
+развернули рукой на 180°, поэтому реверсится только влево/вправо. R и T (с
+Shift) — то же самое, но без пауз: маршрут проезжается без остановок. Длитель-
+ности каждого действия сохраняются, свет и скорость расставляются так, чтобы
+каждый участок пути проехать при том же свете и на той же скорости, что и
+вперёд. Программа при этом не меняется: Enter потом проедет её как обычно.
 
 Язык интерфейса: --lang en (один раз, запоминается в config.json) или --lang ru.
 Настройки (длительности шагов, журнал и т. п.) — в
@@ -232,7 +243,8 @@ KEYMAP: dict[str, str] = {
     "Q": "disconnect",  # Shift+Q
     "w": "fwd", "s": "back", "a": "left", "d": "right",
     "up": "fwd", "down": "back", "left": "left", "right": "right",
-    " ": "stop", "esc": "stop", "enter": "stop",
+    " ": "stop", "esc": "stop",
+    "enter": "run",  # Enter — выполнить программу (и в пульте тоже)
     "]": "speed_up", "=": "speed_up", "+": "speed_up",
     "[": "speed_down", "-": "speed_down", "_": "speed_down",
     "0": "lights_off",
@@ -240,12 +252,15 @@ KEYMAP: dict[str, str] = {
     "e": "m3_fwd", "E": "m3_rev",
     "p": "prog", "P": "prog",
     "m": "record_macro", "M": "record_macro",
-    "r": "run_last", "R": "run_last",
+    # обратный проезд: строчная — с паузами, заглавная (с Shift) — без пауз
+    "r": "rev_back", "R": "rev_back_np",
+    "t": "rev_front", "T": "rev_front_np",
     "f": "save_prog", "F": "save_prog",
     "g": "load_prog", "G": "load_prog",
     "j": "journal", "J": "journal",
     "x": "clear_prog", "X": "clear_prog",
-    "t": "test", "i": "identify", "h": "help", "?": "help",
+    "y": "test", "Y": "test",  # тест-поездка (переехала с t: t — обратный проезд)
+    "i": "identify", "h": "help", "?": "help",
     "k": "hold", "K": "hold", "l": "latch", "L": "latch",
     "\x03": "quit",  # Ctrl+C (терминал в "сыром" режиме)
 }
@@ -255,11 +270,11 @@ KEYMAP.update({key: f"color:{key}" for key in COLOR_BY_KEY})
 _LAYOUT = {
     "й": "q", "ц": "w", "у": "e", "ф": "a", "ы": "s", "в": "d", "е": "t",
     "р": "h", "д": "l", "л": "k", "о": "j", "ш": "i", "к": "r", "а": "f", "п": "g",
-    "с": "c", "и": "b", "ч": "x", "з": "p", "ь": "m",
+    "с": "c", "и": "b", "ч": "x", "з": "p", "ь": "m", "н": "y",
     "х": "[", "ъ": "]",
     "Й": "Q", "Ц": "W", "У": "E", "Ф": "A", "Ы": "S", "В": "D", "Е": "T",
     "Р": "H", "Д": "L", "Л": "K", "О": "J", "Ш": "I", "К": "R", "А": "F", "П": "G",
-    "С": "C", "И": "B", "Ч": "X", "З": "P", "Ь": "M",
+    "С": "C", "И": "B", "Ч": "X", "З": "P", "Ь": "M", "Н": "Y",
     "Х": "[", "Ъ": "]",
 }
 
@@ -388,6 +403,57 @@ def step_text(step: Step) -> str:
     return symbol
 
 
+# Обратный проезд: маршрут в обратном порядке с теми же длительностями.
+#   back — робот едет задним ходом: реверс и «вперёд/назад», и «влево/вправо»;
+#   front — робота развернули рукой: реверс только «влево/вправо».
+REVERSE_MIRROR = {
+    "back": {"fwd": "back", "back": "fwd", "left": "right", "right": "left"},
+    "front": {"fwd": "fwd", "back": "back", "left": "right", "right": "left"},
+}
+
+
+def reversed_steps(editor, mode: str, *, drop_pauses: bool = False) -> list[Step]:
+    """Программа обратного проезда: те же участки пути в обратном порядке.
+
+    Длительности каждого действия сохраняются (шаги с числом превращаются в
+    секунды), паузы тоже — если не попросили обратное (drop_pauses).
+
+    Свет и скорость расставляются заново: перед каждым участком стоит ровно
+    та подсветка и та скорость, при которых этот участок проезжали вперёд,
+    поэтому в обратную сторону путь проезжается при том же свете.
+    """
+    mirror = REVERSE_MIRROR[mode]
+    route: list[tuple[Step, float, int | None, int]] = []
+    light: int | None = None
+    speed = editor.speed
+    for step in editor.steps:
+        if step.kind == "color":
+            light = step.value          # свет горит до следующей смены
+            continue
+        if step.kind == "speed":
+            speed = max(SPEED_MIN, min(SPEED_MAX, step.value))
+            continue
+        route.append((step, editor._step_seconds(step), light, speed))
+    out: list[Step] = []
+    cur_light: int | None = None
+    cur_speed = editor.speed
+    for step, seconds, light, speed in reversed(route):
+        if step.kind == "pause" and drop_pauses:
+            continue
+        if light is not None and light != cur_light:
+            out.append(Step("color", light))
+            cur_light = light
+        if speed != cur_speed:
+            out.append(Step("speed", speed))
+            cur_speed = speed
+        if step.kind == "blink":
+            out.append(Step("blink", step.value))  # мигание остаётся миганием
+        else:
+            out.append(Step(mirror.get(step.kind, step.kind), 1,
+                            round(seconds, STEP_PRECISION)))
+    return out
+
+
 class EditorResult:
     """Ответ редактора на клавишу: что напечатать или что сделать."""
     __slots__ = ("action", "text")
@@ -399,6 +465,23 @@ class EditorResult:
 
 class _RunAbort(Exception):
     """Программа прервана (Esc — в пульт, p — в режим программы, отключение или потеря связи)."""
+
+
+class RunPlan:
+    """Что запускаем: готовые шаги, скорость, повтор и вид прогона.
+
+    rev — None (обычный прогон), "back" (обратно задним ходом) или "front"
+    (робота развернули рукой); drop_pauses — прогон без пауз.
+    """
+    __slots__ = ("steps", "speed", "repeat", "rev", "drop_pauses")
+
+    def __init__(self, steps: list[Step], speed: int, repeat: int,
+                 rev: str | None = None, drop_pauses: bool = False) -> None:
+        self.steps = steps
+        self.speed = speed
+        self.repeat = repeat
+        self.rev = rev
+        self.drop_pauses = drop_pauses
 
 
 class ProgramEditor:
@@ -1189,8 +1272,8 @@ class Tui:
         if remote.recording:
             steps = remote.macro.steps
             if not steps:
-                return tr("[rec] … делайте что-нибудь (Enter — стоп)",
-                          "[rec] … do something (Enter — stop)")
+                return tr("[rec] … делайте что-нибудь (Esc — стоп)",
+                          "[rec] … do something (Esc — stop)")
             text = " · ".join(step_text(step) for step in steps[-8:])
             return f"[rec] {text} ({len(steps)} {steps_word(len(steps))})"
         if not remote.editor.steps:
@@ -1311,10 +1394,11 @@ class Remote:
             pause_time=self.pause_time, blink_time=self.blink_time,
             max_steps=self.max_steps, speed=self.speed,
         )
-        self.macro = MacroRecorder()  # запись макроса (M … Enter)
+        self.macro = MacroRecorder()  # запись макроса (m … Esc)
         self.recording = False
         self._rec_shown = 0           # сколько шагов макроса уже показано в логе
         self._run_task: asyncio.Task | None = None
+        self._run_plan: RunPlan | None = None  # что именно запущено (шаги, повтор, вид)
         self._run_paused = False
         self._run_abort: str | None = None  # remote | editor
         self._run_step = 0
@@ -1907,6 +1991,13 @@ class Remote:
                                   f"speed is back to {was}"))
             self._apply_speed_if_moving()
 
+    def _shift_held(self) -> bool:
+        """Зажат ли Shift (виден только с key-state: это клавиша буста).
+
+        Нужен для Shift+Enter: прогон программы без пауз.
+        """
+        return self._boost_held > 0
+
     def _apply_speed_if_moving(self) -> None:
         if self._is_connected() and self.move != "stop":
             self._schedule_send()  # применить новую скорость на ходу
@@ -1948,9 +2039,9 @@ class Remote:
         self._rec_shown = 0
         self._say("rec", tr(
             "запись макроса: езда, свет, скорость — всё запишется, паузы станут "
-            "ожиданием; Enter или M — стоп",
+            "ожиданием; Esc или m — стоп",
             "recording a macro: driving, light, speed are all recorded, pauses "
-            "become waits; Enter or M — stop",
+            "become waits; Esc or m — stop",
         ))
 
     def _stop_recording(self) -> None:
@@ -1969,9 +2060,9 @@ class Remote:
         n = len(steps)
         self._say("rec", tr(
             f"макрос записан: {n} {steps_word(n)} · {secs_text(self.editor.estimate())} с — "
-            "R — повторить, f — сохранить, p — править",
+            "Enter — проехать, r/t — обратно, f — сохранить, p — править",
             f"macro recorded: {n} {steps_word(n)} · {secs_text(self.editor.estimate())} s — "
-            "R — replay, f — save, p — edit",
+            "Enter — drive, r/t — back, f — save, p — edit",
         ))
         self._say("prog", self.editor.line())
 
@@ -1993,8 +2084,8 @@ class Remote:
         """Короткая строка подсказок для текущего режима (баннер и TUI)."""
         if self.recording:
             return tr(
-                "запись макроса: ездите и светите как обычно · Enter или M — стоп",
-                "recording a macro: drive and light as usual · Enter or M — stop",
+                "запись макроса: ездите и светите как обычно · Esc или m — стоп",
+                "recording a macro: drive and light as usual · Esc or m — stop",
             )
         if self.mode == "editor":
             return self._prog_hint()
@@ -2002,9 +2093,11 @@ class Remote:
             return tr("пробел — пауза/продолжить · Esc — стоп · p — редактор программы",
                       "space — pause/resume · Esc — stop · p — program editor")
         return tr("q — подключиться · Shift+Q — отключиться · w/a/s/d — ехать · "
-                  "пробел — стоп · p — программа · m — макрос · h — все клавиши · Ctrl+C — выход",
+                  "Enter — пуск · пробел — стоп · m — макрос · p — программа · "
+                  "r/t — обратно · h — все клавиши · Ctrl+C — выход",
                   "q — connect · Shift+Q — disconnect · w/a/s/d — drive · "
-                  "space — stop · p — program · m — macro · h — all keys · Ctrl+C — quit")
+                  "Enter — run · space — stop · m — macro · p — program · "
+                  "r/t — drive back · h — all keys · Ctrl+C — quit")
 
     def _print_lines(self, lines) -> None:
         """Напечатать готовые строки (справка): в TUI они идут в лог."""
@@ -2051,6 +2144,9 @@ class Remote:
                 "  w / s         forward / back           (arrows ↑ ↓ too)",
                 "  a / d         turn left / right        (arrows ← → too)",
                 "  space, Esc    STOP (everything at once)",
+                "  Enter         run the program (a recorded macro or a loaded file)",
+                "  Shift+Enter   run it without pauses (Shift is only visible)",
+                "                with key-state on)",
                 "  ] [  or + -  speed up / down (1..12)",
                 "  Shift (hold)  boost: speed 12, release — the previous speed",
                 "                (needs key-state; Shift+Q still disconnects)",
@@ -2060,13 +2156,16 @@ class Remote:
                 "  b / B         blink the light (its color is kept)",
                 "  e / Shift+E   motor 3 (accessory): forward / back — toggle",
                 "  p             program mode: enter steps, run, files",
-                "  m             record a macro: press m, do anything, Enter — stop",
+                "  m             record a macro: press m, do anything, Esc — stop",
                 "                (actions are timed, pauses become waits)",
                 "  x             clear the program (stay in the current mode)",
-                "  R             run the last program (loaded or previous)",
+                "  r / R         drive the route back: r — driving backwards,",
+                "                R — the same without pauses",
+                "  t / T         the robot was turned around by hand: t — drive it",
+                "                back, T — the same without pauses",
                 "  F / G         save / load a program file",
                 "  J             toggle the run journal",
-                "  t             test drive: forward, back, left, right",
+                "  y             test drive: forward, back, left, right",
                 "  i             spin motors 1, 2, 3 one by one (calibration)",
                 "  k / l         mode: hold (auto-stop) / latched",
                 "  h, ?          this help              Ctrl+C — quit",
@@ -2087,6 +2186,8 @@ class Remote:
                 "  w / s         вперёд / назад          (стрелки ↑ ↓ тоже)",
                 "  a / d         разворот влево/вправо   (стрелки ← → тоже)",
                 "  пробел, Esc   СТОП (мгновенно всё)",
+                "  Enter         выполнить программу (записанный макрос или файл)",
+                "  Shift+Enter   то же, но без пауз (Shift виден только с key-state)",
                 "  ] [  или + -  скорость больше / меньше (1..12)",
                 "  Shift зажать  буст: скорость 12, отпустить — прежняя скорость",
                 "                (нужен key-state; Shift+Q по-прежнему отключает)",
@@ -2096,13 +2197,16 @@ class Remote:
                 "  b / B         мигнуть подсветкой (цвет не меняется)",
                 "  e / Shift+E   мотор 3 (аксессуар, если есть): вперёд / назад — тумблер",
                 "  p             режим программы: набор шагов, запуск, файлы",
-                "  m             записать макрос: нажмите m, делайте что угодно, Enter — стоп",
+                "  m             записать макрос: нажмите m, делайте что угодно, Esc — стоп",
                 "                (действия записываются с секундами, паузы — как ожидание)",
                 "  x             очистить программу (режим не меняется)",
-                "  R             запустить последнюю программу (загруженную или прошлую)",
+                "  r / R         проехать маршрут обратно: r — задним ходом,",
+                "                R — то же самое, но без пауз",
+                "  t / T         робота развернули рукой: t — проехать обратно передом,",
+                "                T — то же самое, но без пауз",
                 "  F / G         сохранить / загрузить программу файлом",
                 "  J             журнал прогонов вкл/выкл",
-                "  t             тест-поездка: вперёд, назад, влево, вправо",
+                "  y             тест-поездка: вперёд, назад, влево, вправо",
                 "  i             крутить моторы 1, 2, 3 по очереди (калибровка)",
                 "  k / l         режим: удержание (авто-стоп) / фиксация",
                 "  h, ?          эта справка            Ctrl+C — выход",
@@ -2136,6 +2240,9 @@ class Remote:
                 "  x             clear the program (stay in this mode)",
                 "  E             edit the program in $EDITOR",
                 "  Enter         run",
+                "  Shift+Enter   run without pauses (needs key-state)",
+                "  R / T         drive the route back: backwards / robot turned",
+                "                (with Shift — the same without pauses)",
                 "  f / g         save / load a program file",
                 "  Esc           back to remote (the program stays)",
                 "  h, ?          this help (Ctrl+C — quit)",
@@ -2156,6 +2263,9 @@ class Remote:
                 "  x             очистить программу (остаться в этом режиме)",
                 "  E             редактировать программу в $EDITOR",
                 "  Enter         запустить",
+                "  Shift+Enter   запустить без пауз (нужен key-state)",
+                "  R / T         проехать маршрут обратно: задним ходом / развернув",
+                "                робота (с Shift — то же самое, но без пауз)",
                 "  f / g         сохранить / загрузить программу",
                 "  Esc           назад в пульт (программа остаётся)",
                 "  h, ?          эта справка (Ctrl+C — выход)",
@@ -2219,11 +2329,13 @@ class Remote:
                                                 "hold", "latch", "blink_led"):
             return True
         # Во время записи макроса программа, файлы и калибровка не трогаются:
-        # сначала надо остановить запись (Enter).
-        if self.recording and action in ("prog", "run_last", "save_prog", "load_prog",
-                                         "clear_prog", "test", "identify"):
-            self._say("rec", tr("идёт запись макроса — сначала Enter (стоп)",
-                                "a macro is being recorded — press Enter first"))
+        # сначала надо остановить запись (Esc или m).
+        if self.recording and action in ("prog", "run", "save_prog", "load_prog",
+                                         "clear_prog", "test", "identify",
+                                         "rev_back", "rev_back_np",
+                                         "rev_front", "rev_front_np"):
+            self._say("rec", tr("идёт запись макроса — сначала Esc (стоп)",
+                                "a macro is being recorded — press Esc first"))
             return True
         if action == "connect":
             await self._on_connect_key()
@@ -2257,8 +2369,10 @@ class Remote:
             await self._on_prog_key()
         elif action == "record_macro":
             await self._toggle_recording()
-        elif action == "run_last":
-            await self._on_run_last()
+        elif action == "run":
+            await self._on_run_key()
+        elif action.startswith("rev_"):
+            await self._on_reverse_key(action)
         elif action == "save_prog":
             await self._open_save_prompt()
         elif action == "load_prog":
@@ -2282,12 +2396,12 @@ class Remote:
         return tr(
             "w/a/s/d — шаги · 0..9 — число · c цвет · b мигнуть · пробел пауза · "
             "] [ — скорость (цифры сразу: ]12) · r — повтор · Backspace — убрать шаг · "
-            "Enter — запуск · x — очистить · E — редактор ($EDITOR) · Esc — пульт · "
-            "f/g — файл · h — справка",
+            "Enter — запуск (с Shift — без пауз) · R/T — обратно · x — очистить · "
+            "E — редактор ($EDITOR) · Esc — пульт · f/g — файл · h — справка",
             "w/a/s/d — steps · 0..9 — number · c color · b blink · space pause · "
             "] [ — speed (digits right after: ]12) · r — repeat · Backspace — delete step · "
-            "Enter — run · x — clear · E — editor ($EDITOR) · Esc — remote · "
-            "f/g — file · h — help",
+            "Enter — run (Shift — without pauses) · R/T — drive back · x — clear · "
+            "E — editor ($EDITOR) · Esc — remote · f/g — file · h — help",
         )
 
     async def _stop_if_moving(self, reason: str) -> None:
@@ -2468,9 +2582,12 @@ class Remote:
         key = _to_latin_layout(item) if len(item) == 1 else item
         if key == "\x03":
             return False  # Ctrl+C
-        if self.recording and key == "enter":
+        if self.recording and key == "esc":
             await self._stop_if_moving(tr("запись макроса", "macro recording"))
-            self._stop_recording()
+            self._stop_recording()  # Esc (или m) — стоп, и макрос готов
+            return True
+        if key == "enter" and self._shift_held():
+            await self._on_run_key(drop_pauses=True)  # Shift+Enter — без пауз
             return True
         if self.mode == "editor" and await self._handle_editor_key(key):
             return True
@@ -2594,8 +2711,8 @@ class Remote:
             if self.mode == "editor":
                 self._say("prog", self.editor.line())
             else:
-                self._say("hint", tr("R — запустить · p — редактор",
-                                     "R — run · p — editor"))
+                self._say("hint", tr("Enter — запустить · r/t — обратно · p — редактор",
+                                     "Enter — run · r/t — drive back · p — editor"))
         return True
 
     async def _open_load_prompt(self) -> None:
@@ -2738,13 +2855,44 @@ class Remote:
             self._dbg(f"черновик не сохранился: {exc!r}")
 
     # -- выполнение программы ------------------------------------------------- #
-    async def _on_run_last(self) -> None:
-        if self.editor.is_empty():
-            return  # «ничего не было» — ноль реакции
-        await self._start_program_run(from_editor=False)
+    async def _on_run_key(self, *, drop_pauses: bool = False) -> None:
+        """Enter: выполнить программу (в пульте — «последнюю»: макрос или файл).
 
-    async def _start_program_run(self, *, from_editor: bool) -> None:
+        drop_pauses — Shift+Enter: проехать без остановок (паузы выброшены).
+        """
+        if self.editor.is_empty():
+            self._say("warn", tr(
+                "программы нет — запишите макрос (m) или наберите шаги (p)",
+                "no program — record a macro (m) or enter steps (p)",
+            ))
+            return
+        await self._start_program_run(from_editor=False, drop_pauses=drop_pauses)
+
+    async def _on_reverse_key(self, action: str) -> None:
+        """r/R и t/T: проехать маршрут обратно (r — задним ходом, t — передом).
+
+        Заглавные (с Shift) — то же самое, но без пауз: маршрут проезжается
+        без остановок. Реверс считается от текущей программы, сама программа
+        не меняется: Enter потом проедет её как обычно.
+        """
+        if self.editor.is_empty():
+            self._say("warn", tr(
+                "обратный проезд нечего выполнять — сначала запишите макрос (m) "
+                "или программу (p)",
+                "nothing to reverse — record a macro (m) or make a program (p) first",
+            ))
+            return
+        mode = "back" if action.startswith("rev_back") else "front"
+        await self._start_program_run(from_editor=False, rev=mode,
+                                      drop_pauses=action.endswith("_np"))
+
+    async def _start_program_run(self, *, from_editor: bool, rev: str | None = None,
+                                 drop_pauses: bool = False) -> None:
         if self._run_task is not None and not self._run_task.done():
+            return
+        if self.recording:
+            self._say("rec", tr("идёт запись макроса — сначала Esc (стоп)",
+                                "a macro is being recorded — press Esc first"))
             return
         if self.editor.is_empty():
             if from_editor:
@@ -2755,6 +2903,26 @@ class Remote:
             self._say("warn", tr("нет подключения — нажмите q",
                                  "not connected — press q"))
             return
+        steps = [Step(s.kind, s.value, s.seconds) for s in self.editor.steps]
+        if rev is not None:
+            steps = reversed_steps(self.editor, rev, drop_pauses=drop_pauses)
+            if not steps:
+                self._say("warn", tr(
+                    "обратный проезд пуст: в программе одни паузы",
+                    "nothing to drive back: the program is all pauses",
+                ))
+                return
+        elif drop_pauses:
+            steps = [s for s in steps if s.kind != "pause"]
+            if not steps:
+                self._say("warn", tr("в программе одни паузы — ехать некуда",
+                                     "the program is all pauses — nothing to drive"))
+                return
+        self._run_plan = RunPlan(
+            steps, self.editor.speed,
+            1 if rev is not None else max(1, self.editor.repeat),
+            rev, drop_pauses,
+        )
         self.speed = self.editor.speed
         self._run_paused = False
         self._run_abort = None
@@ -2822,19 +2990,26 @@ class Remote:
 
     async def _run_worker(self) -> None:
         started = time.monotonic()
-        steps = [Step(s.kind, s.value, s.seconds) for s in self.editor.steps]
+        plan = self._run_plan
+        steps = plan.steps
         total = len(steps)
-        repeat = max(1, self.editor.repeat)
-        speed = self.editor.speed
-        planned = self.editor.estimate()
+        repeat = plan.repeat
+        speed = plan.speed
+        planned = sum(self.editor._step_seconds(s) for s in steps) * repeat
         prev_led = self.led_color
         run_led = self.led_color
         self._run_total = total
         self._run_step = 0
         head = tr(f"старт: {total} {steps_word(total)} · скор. {speed}",
                   f"start: {total} {steps_word(total)} · speed {speed}")
-        if steps_are_timed(steps):
+        if plan.rev == "back":
+            head += tr(" · реверс задним ходом", " · reversed (driving backwards)")
+        elif plan.rev == "front":
+            head += tr(" · реверс передом (робот развёрнут)", " · reversed (robot turned around)")
+        elif steps_are_timed(steps):
             head += tr(" · макрос", " · macro")
+        if plan.drop_pauses:
+            head += tr(" · без пауз", " · without pauses")
         if repeat > 1:
             head += tr(f" · повтор {repeat}", f" · repeat {repeat}")
         self._say("run", head)
@@ -2891,7 +3066,10 @@ class Remote:
                 f"готово: {total} {steps_word(total)} за {elapsed:.2f} с (план {planned:.2f} с)",
                 f"done: {total} {steps_word(total)} in {elapsed:.2f} s (planned {planned:.2f} s)",
             ))
-            self._say("hint", tr("R — ещё раз · p — редактор", "R — run again · p — editor"))
+            self._say("hint", tr(
+                "Enter — ещё раз · r — назад · t — развернув робота · p — редактор",
+                "Enter — again · r — back · t — robot turned · p — editor",
+            ))
             self._journal_write(tr("готово", "done"), total, planned, elapsed)
         else:
             await self._led_flash(Color.RED, 0.35, prev_led)
@@ -2919,6 +3097,7 @@ class Remote:
             await self._call(self.robot.all_leds, prev_led)
         self._run_paused = False
         self._run_abort = None
+        self._run_plan = None
         self._run_task = None
 
     # -- потоки чтения клавиатуры -------------------------------------------- #
@@ -3024,7 +3203,8 @@ class Remote:
                 f"программа «{self.program_name}»: {n} {steps_word(n)} · скор. {self.editor.speed}",
                 f"program «{self.program_name}»: {n} {steps_word(n)} · speed {self.editor.speed}",
             ))
-            self._say("hint", tr("R — запустить · p — редактор", "R — run · p — editor"))
+            self._say("hint", tr("Enter — запустить · r/t — обратно · p — редактор",
+                                 "Enter — run · r/t — drive back · p — editor"))
         if self.journal:
             self._say("log", tr(f"журнал включён: {self.journal_path}",
                                 f"journal is on: {self.journal_path}"))
