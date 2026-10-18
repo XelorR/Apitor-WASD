@@ -20,10 +20,11 @@
 9. The “Firefly” program
 10. Challenges
 11. Program files and the editor
-12. If something is wrong
-13. For grown-ups: install, flags, tuning
-14. Mini dictionary
-15. Cheat sheet
+12. The macro and the way back
+13. If something is wrong
+14. For grown-ups: install, flags, tuning
+15. Mini dictionary
+16. Cheat sheet
 
 # 1. What the remote is
 
@@ -171,7 +172,8 @@ How to move around:
 | `p` or `P` | into the program mode — always, from anywhere |
 | `Enter` | start the program (the run begins) |
 | `Esc` | back to the remote (the program stays in memory) |
-| `R` | in the remote: run the last program once more |
+| `Enter` | drive the program (with `Shift` — without pauses) |
+| `r` `t` | in the remote: drive the route back (section 12) |
 
 A trick: if you press `p` while the robot is driving, the remote stops it
 and opens the program. You can leave the program mode only with `Esc` —
@@ -333,7 +335,7 @@ You can save a program into a file and load it next time.
 |---|---|
 | `f` | save: the remote asks for a name, `Enter` accepts it |
 | `g` | load: a list of files, type a number and `Enter` |
-| `E` (`Shift+E`) | edit the program in a full-size editor |
+| `e` (`E`) | edit the program in a full-size editor |
 | `x` | clear the program |
 
 Program files live in the `programs/` folder next to the remote. You can
@@ -360,7 +362,73 @@ it keeps a draft and picks it up next time. Ready-made examples live in
 the `examples/` folder.
 </div>
 
-# 12. If something is wrong
+# 12. The macro and the way back
+
+You do not have to collect a program by hand — you can **show** it: let
+the remote record your trip. Such a recording is called a **macro**.
+
+**How to record:**
+
+1. Press `m` — the log shows `[rec] recording a macro`.
+2. Drive the robot as usual: `w` `a` `s` `d`, the light, the turns, the
+   pauses. The remote records everything, and every ride becomes a step
+   with seconds.
+3. Press `Esc` (or `m` once more) — the recording is ready and already
+   sits in the program line.
+
+```
+[rec] recording a macro: driving, light, speed are all recorded, pauses become waits; Esc or m — stop
+[rec] ↑
+[rec] ←
+[rec] macro recorded: 3 steps · 2.88 s — Enter — drive, r/t — back, f — save, p — edit
+```
+
+Now `Enter` — and the robot repeats the trip by itself: with the same
+pauses, light and speed. A macro is an ordinary program: you can edit it
+(`p`), save it into a file (`f`) and load it next time (`g`).
+
+<div class="warn">
+While the recording is on, `p`, `Enter`, `r`, `t`, `x`, `f`, `g` do not
+work: finish the recording first — `Esc`. And `space` is just a robot
+stop: the recording continues.
+</div>
+
+## The way back: `r` and `t`
+
+The robot drove away to the other end of the room. How to bring it back
+along its own tracks without collecting a second program? There are two
+keys for that:
+
+* `r` — **backwards**. The robot drives the route from the end, and
+  everything is mirrored: “forward” becomes “backward”, “left” becomes
+  “right”. It backs along its own tracks.
+* `t` — **the robot was turned by hand**. At the end of the route you
+  turned it 180°, so it drives back forward: only the turns change
+  (left ↔ right).
+
+![The way back: the same route from the end — backwards and forward](img/reverse.svg){width=100%}
+
+The duration is kept: if the robot drove for 2 seconds on the way out,
+it drives for 2 seconds on the way back as well (numbers like `↑5`
+become seconds). The light, too: a stretch driven with the light-blue
+colour is driven back with the same light-blue — the colour just
+switches at another moment, when you reach that stretch (in the picture
+`●5`, `●3`, `●1` stand in a different order).
+
+<div class="tip">
+`Shift+Enter` drives the program without pauses, and `R` or `T` (`Shift`
+with `r` or `t`) does the same on the way back. The `Shift` variants
+work only when the keyboard tracking is on (a grown-up knows what that
+is: section 14).
+</div>
+
+The way back does not spoil the program: it is built on the fly, so
+after it `Enter` drives forward again and `p` shows the old steps. And
+`repeat` has nothing to do with it: back the robot always drives once —
+after the first pass it already stands at the start of the route and
+looks the other way.
+
+# 13. If something is wrong
 
 | What happened | What to do |
 |---|---|
@@ -373,7 +441,7 @@ the `examples/` folder.
 | Everything is frozen | `Ctrl+C`: the remote stops the motors and quits |
 | Not sure what to press | `h` — help; `Esc` — back to the remote |
 
-# 13. For grown-ups: install, flags, tuning
+# 14. For grown-ups: install, flags, tuning
 
 **Install** (once):
 
@@ -387,7 +455,8 @@ python3 -m venv .venv
 
 ```bash
 .venv/bin/python apitor_remote.py                # the usual remote
-.venv/bin/python apitor_remote.py --tui          # full-screen interface
+.venv/bin/python apitor_remote.py --tui          # full-screen interface:
+                                                 # the banner on top shows the mode keys
 .venv/bin/python apitor_remote.py --simulate     # no robot: print frames
 .venv/bin/python apitor_remote.py --program examples/square.txt
 ```
@@ -396,6 +465,11 @@ On Linux the remote needs permission to read the keyboard (otherwise it
 warns and falls back to auto-stop):
 `sudo usermod -aG input "$USER"`, then log out and in again. On Windows
 Python 3.10+ and Bluetooth are enough.
+
+The `Shift` variants (`Shift+Enter`, `R`, `T` and the boost) work only
+when the keyboard tracking is on. If you do not need it at all (the
+auto-stop by `--hold-timeout` is enough), run with `--no-key-state`: the
+remote will not read the keyboard in `/dev/input` and will not warn.
 
 Useful flags (the full list is in the README):
 
@@ -408,11 +482,12 @@ Useful flags (the full list is in the README):
 | `--max-steps N` | limit the program length (0 — no limit) |
 | `--log` | run journal in `~/.config/apitor-control/runs.log` |
 | `--key-state-device PATH` | watch a single keyboard only |
+| `--no-key-state` | do not read the keyboard at all: no permissions, no warnings |
 | `--verbose` | detailed output: protocol frames and scanning |
 | `--lang ru` | Russian interface |
 
 **Calibration** (if the robot drives the wrong way). Connect and press
-`t`: the robot drives forward, backward and sideways, so you can see what
+`y`: the robot drives forward, backward and sideways, so you can see what
 is mixed up. Then start with the right flag:
 
 ```bash
@@ -434,9 +509,11 @@ docs/build.sh
 
 It needs `pandoc`, `graphviz` and `calibre` (see `docs/README.md`).
 
-# 14. Mini dictionary
+# 15. Mini dictionary
 
 * **Remote** — the program that drives the robot from your keyboard.
+* **Macro** — a recording of your trip (`m`) that becomes a program.
+* **The way back** — the robot drives the same route from the end (`r`, `t`).
 * **Step** — one action of a program: drive, turn, blink.
 * **Program** — a list of steps the robot performs by itself.
 * **Run** — performing the program from start to finish.
@@ -447,7 +524,7 @@ It needs `pandoc`, `graphviz` and `calibre` (see `docs/README.md`).
 * **Draft** — the program the remote remembers between launches.
 * **Terminal** — the window where the remote lives; keys are pressed in it.
 
-# 15. Cheat sheet
+# 16. Cheat sheet
 
 **Remote:**
 
@@ -463,10 +540,14 @@ It needs `pandoc`, `graphviz` and `calibre` (see `docs/README.md`).
 | `e` `Shift+E` | motor 3: forward / backward (a switch) |
 | `k` `l` | hold / latched |
 | `p` `P` | program mode |
-| `R` | run the last program |
+| `Enter` | drive the program: the last macro or a file |
+| `Shift+Enter` | the same, but without pauses |
+| `r` `t` | drive the route back: backwards / turned around |
+| `R` `T` | the same, but without pauses |
+| `m` | record a macro (`Esc` or another `m` stops it) |
 | `f` `g` | save / load a program file |
-| `E` | program editor |
-| `t` `i` | test drive / motors one by one |
+| `e` `E` | program editor |
+| `y` `i` | test drive / motors one by one |
 | `j` | run journal |
 | `h` `?` | help |
 | `Ctrl+C` | quit |
@@ -474,9 +555,12 @@ It needs `pandoc`, `graphviz` and `calibre` (see `docs/README.md`).
 **Program mode:** `w/a/s/d` — steps · digits — how many times ·
 `space` — pause · `b` — blink · `c` — colour · `r` — repeat ·
 `]` `[` — speed · `Backspace` — delete a step · `x` — clear ·
-`Enter` — start · `Esc` — to the remote.
+`Enter` — start (with `Shift` — without pauses) · `Esc` — to the remote.
+**The way back:** `R` — backwards, without pauses, `t` `T` — forward
+(the small `r` in the editor is the repeat; with pauses — `r` in the remote).
 
 **Run:** `space` — pause/resume · `Esc` — stop · `p` — edit.
+After a run: `Enter` — once more, `r` `t` — back.
 
 A mini example (the square) as a file `programs/square.txt`:
 

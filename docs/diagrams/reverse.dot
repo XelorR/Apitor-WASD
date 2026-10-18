@@ -1,0 +1,48 @@
+// Обратный проезд: тот же маршрут с конца — задним ходом (r) и передом (t).
+// Значки одни для всех языков: цвет = цвет подсветки, стрелки = шаг, буква = клавиша.
+// Собирается docs/build.sh в docs/img/reverse.svg
+digraph reverse {
+  graph [rankdir=LR, bgcolor="transparent", pad=0.15, nodesep=0.35, ranksep=0.5];
+  node  [fontname="Noto Sans", fontsize=15, shape=box, style="rounded,filled",
+         fillcolor="#eef3fb", color="#4a6fa5", penwidth=1.4, margin="0.22,0.13"];
+  edge  [color="#8a97a8", penwidth=1.4, arrowsize=0.8];
+
+  // ── туда: как записано ────────────────────────────────────────────────
+  subgraph cluster_fwd {
+    label="Enter"; fontname="Noto Sans"; fontsize=15; fontcolor="#3d7a33";
+    style="rounded"; color="#bfdcb6"; penwidth=1.4;
+    f1 [label=<<font color="#e04b3c">●1</font>  ↑ 2>, fillcolor="#dff0d8", color="#5a9e4b"];
+    f2 [label=<<font color="#e8c62c">●3</font>  → 1>, fillcolor="#dff0d8", color="#5a9e4b"];
+    f3 [label=<<font color="#29b6d8">●5</font>  ↑ 1>, fillcolor="#dff0d8", color="#5a9e4b"];
+    f1 -> f2 -> f3;
+  }
+
+  // ── обратно задним ходом: всё зеркально ───────────────────────────────
+  subgraph cluster_back {
+    label="r"; fontname="Noto Sans"; fontsize=15; fontcolor="#7a4f9b";
+    style="rounded"; color="#ddc9e8"; penwidth=1.4;
+    b1 [label=<<font color="#29b6d8">●5</font>  ↓ 1>, fillcolor="#f3e6f7", color="#9b6bb5"];
+    b2 [label=<<font color="#e8c62c">●3</font>  ← 1>, fillcolor="#f3e6f7", color="#9b6bb5"];
+    b3 [label=<<font color="#e04b3c">●1</font>  ↓ 2>, fillcolor="#f3e6f7", color="#9b6bb5"];
+    b1 -> b2 -> b3;
+  }
+
+  // ── обратно передом: робота развернули рукой ──────────────────────────
+  subgraph cluster_turn {
+    label="t"; fontname="Noto Sans"; fontsize=15; fontcolor="#a9791e";
+    style="rounded"; color="#f0dcae"; penwidth=1.4;
+    t1 [label=<<font color="#29b6d8">●5</font>  ↑ 1>, fillcolor="#fdf0d5", color="#c99a2e"];
+    t2 [label=<<font color="#e8c62c">●3</font>  ← 1>, fillcolor="#fdf0d5", color="#c99a2e"];
+    t3 [label=<<font color="#e04b3c">●1</font>  ↑ 2>, fillcolor="#fdf0d5", color="#c99a2e"];
+    t1 -> t2 -> t3;
+  }
+
+  // тот же самый участок пути — пунктиром
+  edge [style=dashed, color="#c9d6e8", dir=none, penwidth=1.1];
+  f1 -> b3;
+  f2 -> b2;
+  f3 -> b1;
+  f1 -> t3;
+  f2 -> t2;
+  f3 -> t1;
+}
