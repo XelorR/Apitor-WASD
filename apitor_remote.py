@@ -22,7 +22,7 @@
     J ............ журнал прогонов вкл/выкл
     y ............ тест-поездка (проверить направления)
     i ............ моторы по одному (калибровка)
-    k / l ........ режим движения: удержание / фиксация
+    k / l ........ режим движения: удержание / круиз-контроль
     h, ? ......... справка              Ctrl+C ....... выход
 
 Режим программы: нажмите `p` — набирайте шаги (w/a/s/d — вперёд/назад/
@@ -62,7 +62,9 @@ Shift) — то же самое, но без пауз: маршрут проез
 (автоповтор операционной системы), и робот сам останавливается через
 --hold-timeout секунд после отпускания; короткое нажатие = толчок.
 Клавиши `k`/`l` выбирают режим движения (это не тумблер): `k` — удержание,
-`l` — "фиксация": робот едет, пока не нажмёте стоп/другое.
+как держать педаль газа; `l` — круиз-контроль, как в машине: один раз
+нажали `w` — робот едет сам, руки свободны, а `пробел` — тормоз
+(останавливает, пока не поедете снова).
 
 Удержание работает "как в играх": пульт сам читает реальное состояние клавиш
 (Linux: evdev, Windows: WinAPI) и останавливает робота в момент отпускания,
@@ -1435,7 +1437,7 @@ class Tui:
                  tr(f"скор. {remote.speed}", f"speed {remote.speed}")
                  + ("+" if remote._boost_speed is not None else "")]
         if remote.mode == "remote":
-            parts.append(tr("фиксация", "latched") if remote.latched
+            parts.append(tr("круиз-контроль", "cruise") if remote.latched
                          else tr("удержание", "hold"))
         else:
             parts.append(tr("программа", "program") if remote.mode == "editor"
@@ -2070,11 +2072,13 @@ class Remote:
             self._schedule_send()  # применить новую скорость на ходу
 
     def _on_latch(self, latched: bool) -> None:
-        """k/l: выбрать режим движения — удержание (k) или фиксацию (l)."""
+        """k/l: режим движения — удержание (k) или круиз-контроль (l)."""
         self.latched = latched
         if self.latched:
-            self._say("mode", tr("фиксация: робот едет, пока не нажмёте пробел/другое",
-                                 "latched: the robot drives until you press space/other"))
+            self._say("mode", tr(
+                "круиз-контроль: робот едет сам, пока не нажмёте пробел (тормоз) или другое",
+                "cruise control: the robot drives on until you press space (brake) or another key",
+            ))
         elif self.key_state:
             self._say("mode", tr("удержание: стоп в момент отпускания клавиши (key-state)",
                                  "hold: stop the moment the key is released (key-state)"))
@@ -2142,7 +2146,7 @@ class Remote:
         if action in self._held_moves:
             self._held_moves.remove(action)
         if self.latched or not active:
-            return  # фиксация: отпускание не останавливает (и в чужих режимах — тоже)
+            return  # круиз-контроль: отпускание не останавливает (и в чужих режимах — тоже)
         if self._held_moves:
             await self._on_move(self._held_moves[-1])  # вернуться к другой зажатой
         elif self.move != "stop":
@@ -2309,8 +2313,8 @@ class Remote:
             f"Apitor remote — {self.profile.name} (product '{self.profile.product}')",
         ))
         mode = (
-            tr("фиксация (робот едет, пока не остановите)",
-               "latched (the robot drives until you stop it)")
+            tr("круиз-контроль (робот едет сам, пока не остановите)",
+               "cruise control (the robot drives on until you stop it)")
             if self.latched
             else (
                 tr("удержание (стоп в момент отпускания, key-state)",
@@ -2363,7 +2367,7 @@ class Remote:
                 "  J             toggle the run journal",
                 "  y             test drive: forward, back, left, right",
                 "  i             spin motors 1, 2, 3 one by one (calibration)",
-                "  k / l         mode: hold (auto-stop) / latched",
+                "  k / l         mode: hold / cruise control",
                 "  h, ?          this help              Ctrl+C — quit",
                 "",
                 "calibration (if the robot drives the wrong way), at launch:",
@@ -2407,7 +2411,7 @@ class Remote:
                 "  J             журнал прогонов вкл/выкл",
                 "  y             тест-поездка: вперёд, назад, влево, вправо",
                 "  i             крутить моторы 1, 2, 3 по очереди (калибровка)",
-                "  k / l         режим: удержание (авто-стоп) / фиксация",
+                "  k / l         режим движения: удержание / круиз-контроль",
                 "  h, ?          эта справка            Ctrl+C — выход",
                 "",
                 "калибровка (если робот едет не туда), указывается при запуске:",
@@ -3715,8 +3719,11 @@ def build_parser() -> argparse.ArgumentParser:
         help=tr("через сколько секунд после отпускания клавиши остановиться",
                 "seconds after the key is released before stopping"),
     )
-    parser.add_argument("--latched", action="store_true",
-                        help=tr("стартовать в режиме фиксации", "start in latched mode"))
+    parser.add_argument("--cruise", dest="latched", action="store_true",
+                        help=tr("стартовать с включённым круиз-контролем",
+                                "start with cruise control on"))
+    parser.add_argument("--latched", dest="latched", action="store_true",
+                        help=argparse.SUPPRESS)  # прежнее имя флага, для совместимости
     parser.add_argument("--simulate", action="store_true",
                         help=tr("без Bluetooth: печатать кадры", "no Bluetooth: print frames"))
     parser.add_argument("--tui", action="store_true",

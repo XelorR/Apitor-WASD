@@ -218,14 +218,15 @@ game it is best to put the robot on charge.
 | `space` or `Esc` | STOP — the robot freezes instantly |
 | `]` `[` or `+` `-` | speed: 1 (very slow) … 12 (fast) |
 | `Shift` (hold) | boost: speed 12 while held, the old speed comes back after |
-| `k` or `l` | how to drive: “hold” or “latched” |
+| `k` or `l` | how to drive: “hold” or “cruise control” |
 
 There are two ways to drive, switched with `k` and `l`:
 
 * **hold**: the robot drives while the key is held down. Let go — it
   stops. This is the best way to learn and to park.
-* **latched**: press `w` once and the robot drives until you press
-  `space`. Great for long straights and one-step programs.
+* **cruise control**: like in a car. Press `w` once and the robot
+  drives on by itself, hands free; `space` is the brake — press it
+  and the robot stops. Great for long straights and one-step programs.
 
 <div class="tip">
 The `Shift` boost works only when the remote can watch real key presses
@@ -819,7 +820,7 @@ Useful flags (the full list is in the README):
 | `--tui` | full-screen interface with a banner and the journal |
 | `--no-cache` | do not use the saved robot address |
 | `--simulate` | no robot: print the frames that would be sent |
-| `--latched` | start in the latched mode |
+| `--cruise` | start with cruise control on (the old name `--latched` still works) |
 | `--program-dir DIR` | where program files live (default `programs/`) |
 | `--step-time` `--turn-time` `--pause-time` `--blink-time` | step durations, s (0.6 / 0.6 / 1.0 / 0.25) |
 | `--max-steps N` | limit the program length (0 — no limit) |
@@ -924,6 +925,7 @@ factory settings: it recreates them on the next launch.
 * **STOP** — `space` or `Esc`: the robot freezes and drives no more (section 4, page {{page:4}}).
 * **To blink** — to flash the light briefly (the `b` key; section 5, page {{page:5}}).
 * **Diagram** — a picture in this manual; the sources live in `docs/diagrams/` (section 14, page {{page:14}}).
+* **Cruise control** — the mode where the robot drives on by itself until you press `space` (section 4, page {{page:4}}).
 
 # 16. Cheat sheet
 
@@ -939,7 +941,7 @@ factory settings: it recreates them on the next launch.
 | `1`…`8`, `0` | light colour, `0` turns it off |
 | `b` `B` | blink |
 | `v` `V` | motor 3: forward / backward (a switch) |
-| `k` `l` | hold / latched |
+| `k` `l` | hold / cruise control |
 | `p` `P` | program mode |
 | `Enter` | drive the program: the last macro or a file |
 | `Shift+Enter` | the same, but without pauses |
