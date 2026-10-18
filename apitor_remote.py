@@ -47,11 +47,18 @@ E — правка во внешнем редакторе ($EDITOR/$VISUAL, ин
 скорость становится 12, а после отпускания возвращается прежняя (Shift+Q
 при этом по-прежнему отключает робота).
 
+С флагом --tui пульт занимает весь экран: сверху состояние (робот, связь,
+скорость, режим, свет), в середине — лог событий, снизу — строка программы
+и подсказки. Клавиши и поведение те же; при выходе терминал возвращается
+как был. Внешний редактор ($EDITOR, клавиша E) на время работы забирает
+экран себе.
+
 Примеры:
 
     .venv/bin/python apitor_remote.py                # Robot R, скорость 6
     .venv/bin/python apitor_remote.py --speed 9      # быстрее
     .venv/bin/python apitor_remote.py --simulate     # без Bluetooth: печать кадров
+    .venv/bin/python apitor_remote.py --tui          # полноэкранный интерфейс
     .venv/bin/python apitor_remote.py --key-state-device /dev/input/event7  # одна клавиатура
     .venv/bin/python apitor_remote.py --address AA:BB:CC:DD:EE:FF
     .venv/bin/python apitor_remote.py --program programs/квадрат.txt
@@ -73,12 +80,15 @@ import os
 import re
 import shlex
 import shutil
+import signal
 import struct
 import subprocess
 import sys
 import tempfile
+import textwrap
 import threading
 import time
+from collections import deque
 from pathlib import Path
 
 from bleak import BleakScanner
@@ -195,6 +205,9 @@ COLOR_BY_KEY = {
     "7": (Color.PURPLE, "фиолетовый", "purple"),
     "8": (Color.WHITE, "белый", "white"),
 }
+# Обратный словарь для статуса в TUI (Color -> «красный»/«red»).
+COLOR_NAMES = {color: (ru, en) for color, ru, en in COLOR_BY_KEY.values()}
+COLOR_NAMES[Color.OFF] = ("выкл.", "off")
 
 # Символ -> действие. Стрелки приходят как "up"/"down"/"left"/"right".
 KEYMAP: dict[str, str] = {
@@ -681,8 +694,10 @@ def read_key_posix(fd: int) -> str | None:
 class SimRobot:
     """Печатает кадры, которые отправила бы библиотека, вместо Bluetooth."""
 
-    def __init__(self) -> None:
+    def __init__(self, echo=None) -> None:
         self._connected = False
+        # echo — чем печатать кадры (в TUI они попадают в лог, а не в терминал)
+        self._echo = echo or (lambda text: print(text, flush=True))
 
     @property
     def is_connected(self) -> bool:
@@ -702,7 +717,7 @@ class SimRobot:
         self._connected = False
 
     async def _send(self, data: bytes) -> None:
-        print(f"  [sim] -> {data.hex()}", flush=True)
+        self._echo(f"  [sim] -> {data.hex()}")
 
     async def run_motor(self, motor, direction, speed: int) -> None:
         await self._send(p.motor_command(int(motor), int(direction), int(speed)))
@@ -782,6 +797,213 @@ async def _scan_once(product: str, timeout: float) -> list:
 
 
 # --------------------------------------------------------------------------- #
+# Полноэкранный интерфейс (--tui)
+# --------------------------------------------------------------------------- #
+
+
+def _truncate(text: str, width: int) -> str:
+    """Обрезать строку по ширине терминала (место на многоточие оставляем)."""
+    if len(text) <= width:
+        return text
+    return text[: max(0, width - 1)] + "…"
+
+
+def _enable_windows_ansi() -> None:
+    """Включить ANSI-последовательности в консоли Windows (иначе — мусор)."""
+    if not IS_WINDOWS:
+        return
+    with contextlib.suppress(Exception):
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        # ENABLE_PROCESSED_OUTPUT | ENABLE_WRAP_AT_EOL_OUTPUT | VT-последовательности
+        kernel32.SetConsoleMode(kernel32.GetStdHandle(-11), 7)
+
+
+class Tui:
+    """Полноэкранный интерфейс пульта (--tui): статус, лог, подсказки.
+
+    Рисуется ANSI-последовательностями на альтернативном экране: сверху
+    состояние (робот, связь, скорость, режим, свет), в середине — лог
+    событий, снизу — строка программы и подсказки (или приглашение ввода).
+    Сообщения приходят в note() вместо обычной печати, поэтому вывод не
+    разъезжается по экрану; при выходе терминал возвращается как был.
+    """
+
+    MAX_LOG = 400  # сколько строк лога помнить
+    TAG_COLORS = {
+        "err": "31", "warn": "33", "ok": "32", "info": "36", "hint": "2;37",
+        "robot": "36", "motor": "35", "test": "36", "led": "1;33",
+        "speed": "1;36", "mode": "1;36", "help": "2;37", "prog": "1;34",
+        "save": "34", "load": "34", "log": "2;37", "run": "1;35", "dbg": "2;37",
+    }
+
+    def __init__(self, remote: Remote) -> None:
+        self.remote = remote
+        self.log: deque[tuple[str | None, str]] = deque(maxlen=self.MAX_LOG)
+        self.active = False
+        self._resized = False
+        self._tick: asyncio.Task | None = None
+        self._old_winch = None
+        self._lock = threading.Lock()  # кадр рисуется целиком (в т. ч. из потоков)
+
+    # -- экран --------------------------------------------------------------- #
+    def start(self) -> None:
+        """Занять экран терминала (альтернативный экран) и нарисовать кадр."""
+        if self.active:
+            return
+        _enable_windows_ansi()
+        with self._lock:
+            sys.stdout.write("\x1b[?1049h\x1b[?25l")  # альтернативный экран, курсор скрыт
+            sys.stdout.flush()
+        self.active = True
+        if hasattr(signal, "SIGWINCH"):
+            with contextlib.suppress(ValueError, OSError):
+                self._old_winch = signal.signal(signal.SIGWINCH, self._on_winch)
+        try:
+            self._tick = asyncio.get_running_loop().create_task(self._ticker())
+        except RuntimeError:  # вне цикла событий: TUI просто не следит за размером
+            self._tick = None
+        self.redraw()
+
+    def stop(self) -> None:
+        """Вернуть обычный экран терминала и видимый курсор."""
+        if not self.active:
+            return
+        self.active = False
+        if self._tick is not None:
+            self._tick.cancel()
+            self._tick = None
+        if self._old_winch is not None and hasattr(signal, "SIGWINCH"):
+            with contextlib.suppress(ValueError, OSError):
+                signal.signal(signal.SIGWINCH, self._old_winch)
+            self._old_winch = None
+        with self._lock:
+            sys.stdout.write("\x1b[?25h\x1b[?1049l")
+            sys.stdout.flush()
+
+    def _on_winch(self, *_args) -> None:
+        self._resized = True
+
+    async def _ticker(self) -> None:
+        """Перерисовать кадр, если терминал поменял размер."""
+        with contextlib.suppress(asyncio.CancelledError):
+            while True:
+                await asyncio.sleep(0.2)
+                if self._resized:
+                    self._resized = False
+                    self.redraw()
+
+    def note(self, tag: str | None, text: str) -> None:
+        """Положить сообщение в лог TUI и сразу показать его."""
+        self.note_lines(((tag, text),))
+
+    def note_lines(self, lines) -> None:
+        """Добавить в лог сразу несколько строк (справка) — одна перерисовка."""
+        for tag, text in lines:
+            self.log.append((tag, text))
+        self.redraw()
+
+    def redraw(self) -> None:
+        """Нарисовать кадр целиком: шапка, лог, программа, подсказки."""
+        if not self.active:
+            return
+        size = shutil.get_terminal_size((80, 24))
+        width = max(20, size.columns)
+        height = max(4, size.lines)
+        rows = self._render(width, height)
+        chunks = []
+        for number, row in enumerate(rows[:height], 1):
+            chunks.append(f"\x1b[{number};1H\x1b[2K{row}")
+        chunks.append(f"\x1b[{height};1H\x1b[J\x1b[?25l")
+        with self._lock:
+            try:
+                sys.stdout.write("".join(chunks))
+                sys.stdout.flush()
+            except (OSError, ValueError):  # терминал пропал — печатать больше некуда
+                self.active = False
+
+    # -- сборка кадра -------------------------------------------------------- #
+    def _render(self, width: int, height: int) -> list[str]:
+        program = self._program_line()
+        log_rows = max(1, height - 2 - (1 if program else 0))
+        log = self._log_lines(width)[-log_rows:]
+        rows = [self._bar(self._status_line(), width, "7")]
+        rows += [""] * max(0, log_rows - len(log))  # лог растёт снизу
+        rows += log
+        if program:
+            rows.append(f"\x1b[2m{_truncate(program, width)}\x1b[0m")
+        rows.append(self._bar(self._prompt_line(), width,
+                              "7" if self.remote.prompt is not None else "2"))
+        return rows
+
+    @staticmethod
+    def _bar(text: str, width: int, style: str) -> str:
+        """Строка во всю ширину — шапка и подвал TUI."""
+        return f"\x1b[{style}m{_truncate(text, width).ljust(width)}\x1b[0m"
+
+    def _status_line(self) -> str:
+        remote = self.remote
+        link = (tr("подключён", "connected") if remote._is_connected()
+                else tr("нет связи", "no link"))
+        parts = [f"Apitor {remote.profile.name}", link,
+                 tr(f"скор. {remote.speed}", f"speed {remote.speed}")
+                 + ("+" if remote._boost_speed is not None else "")]
+        if remote.mode == "remote":
+            parts.append(tr("фиксация", "latched") if remote.latched
+                         else tr("удержание", "hold"))
+        else:
+            parts.append(tr("программа", "program") if remote.mode == "editor"
+                         else tr("прогон", "run"))
+        if remote.key_state:
+            parts.append("key-state")
+        if remote.mode == "run" and remote._run_total:
+            parts.append(f"{remote._run_step}/{remote._run_total}")
+        name = COLOR_NAMES.get(remote.led_color)
+        if name:
+            parts.append(tr(f"свет: {name[0]}", f"light: {name[1]}"))
+        return " · ".join(parts)
+
+    def _program_line(self) -> str | None:
+        """Строка программы: в редакторе — живая, иначе — что загружено."""
+        remote = self.remote
+        if not remote.editor.steps:
+            return None
+        if remote.mode == "editor":
+            return remote.editor.line()
+        n = len(remote.editor.steps)
+        text = " · ".join(step_text(step) for step in remote.editor.steps)
+        return f"[prog] {text} ({n} {steps_word(n)})"
+
+    def _prompt_line(self) -> str:
+        """Нижняя строка: приглашение ввода или подсказки режима."""
+        remote = self.remote
+        prompt = remote.prompt
+        if prompt is None:
+            return remote._keys_hint()
+        tag = "load" if prompt.get("kind") == "load" else "save"
+        title = prompt.get("title") or ""
+        if prompt.get("kind") == "confirm":
+            return f"[{tag}] {title}"
+        return f"[{tag}] {title}: {prompt.get('text', '')}▏"
+
+    def _log_lines(self, width: int) -> list[str]:
+        """Строки лога с переносом по ширине и цветом по тегу."""
+        wrapper = textwrap.TextWrapper(
+            width=width, subsequent_indent="  ",
+            replace_whitespace=False, drop_whitespace=False, break_long_words=True,
+        )
+        out: list[str] = []
+        for tag, text in self.log:
+            prefix = f"[{tag}] " if tag else ""
+            color = self.TAG_COLORS.get(tag or "")
+            start, reset = (f"\x1b[{color}m", "\x1b[0m") if color else ("", "")
+            for line in wrapper.wrap(prefix + text) or [prefix]:
+                out.append(f"{start}{_truncate(line, width)}{reset}")
+        return out
+
+
+# --------------------------------------------------------------------------- #
 # Пульт
 # --------------------------------------------------------------------------- #
 
@@ -804,6 +1026,8 @@ class Remote:
         self.scan_timeout = max(2.0, args.scan_timeout)
         self.cli_address = (args.address or "").strip() or None
         self.verbose = bool(args.verbose)
+        self.want_tui = bool(getattr(args, "tui", False))  # --tui: полноэкранный режим
+        self.tui: Tui | None = None
 
         # Настройки программы: флаг > config.json > значение по умолчанию.
         def number(flag_name: str, key: str, default: float, minimum: float) -> float:
@@ -876,11 +1100,23 @@ class Remote:
         self._loop: asyncio.AbstractEventLoop | None = None
 
     # -- вывод --------------------------------------------------------------- #
-    def _emit(self, text: str, end: str = "\n") -> None:
-        """Печать; во время внешнего редактора сообщения копятся и не мешают."""
+    def _emit(self, text: str, end: str = "\n", tag: str | None = None) -> None:
+        """Печать; в TUI — в лог, во время внешнего редактора — в буфер.
+
+        С тегом (tag) печатается «[тег] текст», а в TUI тег идёт в цвет
+        и в префикс строки лога.
+        """
         if self._external_editor.is_set():
-            self._pending_output.append((text, end))
+            self._pending_output.append((text, end, tag))
             return
+        if self.tui is not None and self.tui.active:
+            if end != "":  # куски приглашения TUI рисует сама
+                self.tui.note(tag, text)
+            return
+        self._print_line(f"[{tag}] {text}" if tag else text, end)
+
+    @staticmethod
+    def _print_line(text: str, end: str = "\n") -> None:
         try:
             print(text, end=end, flush=True)
         except UnicodeEncodeError:  # старые консоли Windows
@@ -888,22 +1124,60 @@ class Remote:
 
     def _flush_pending_output(self) -> None:
         pending, self._pending_output = self._pending_output, []
-        for text, end in pending:
-            try:
-                print(text, end=end, flush=True)
-            except UnicodeEncodeError:
-                print(text.encode("ascii", "replace").decode("ascii"), end=end, flush=True)
+        for text, end, tag in pending:
+            if self.tui is not None and self.tui.active:
+                if end != "":
+                    self.tui.note(tag, text)
+            else:
+                self._print_line(f"[{tag}] {text}" if tag else text, end)
 
     def _out(self, text: str, end: str = "\n") -> None:
         """Печать без [тега] (строки приглашений, эхо ввода)."""
         self._emit(text, end=end)
 
     def _say(self, tag: str, message: str) -> None:
-        self._emit(f"[{tag}] {message}")
+        self._emit(message, tag=tag)
 
     def _dbg(self, message: str) -> None:
-        if self.verbose:
-            print(f"[dbg] {message}", file=sys.stderr, flush=True)
+        if not self.verbose:
+            return
+        if self.tui is not None and self.tui.active:  # не рвать кадр TUI
+            self.tui.note("dbg", message)
+            return
+        print(f"[dbg] {message}", file=sys.stderr, flush=True)
+
+    def _sim_echo(self, text: str) -> None:
+        """Кадры --simulate: как обычная строка вывода (в TUI — в лог)."""
+        self._emit(text)
+
+    # -- полноэкранный интерфейс (--tui) ------------------------------------- #
+    def _tui_start(self) -> None:
+        """Включить TUI, если он запрошен (--tui)."""
+        if not self.want_tui or self.tui is not None:
+            return
+        self.tui = Tui(self)
+        self.tui.start()
+
+    def _tui_stop(self) -> None:
+        """Убрать TUI: терминал возвращается к обычному виду."""
+        if self.tui is not None:
+            self.tui.stop()
+            self.tui = None
+
+    def _tui_pause(self) -> None:
+        """Временно уйти с альтернативного экрана (внешний редактор)."""
+        if self.tui is not None and self.tui.active:
+            self.tui.stop()
+
+    def _tui_resume(self) -> None:
+        """Вернуться в TUI после паузы (лог сохраняется)."""
+        if self.tui is not None and not self.tui.active:
+            self.tui.start()
+
+    def _tui_touch(self) -> None:
+        """Перерисовать TUI после обработки клавиши."""
+        if self.tui is not None and self.tui.active:
+            self.tui.redraw()
 
     # -- очередь клавиш ------------------------------------------------------ #
     def _put(self, item) -> None:
@@ -920,10 +1194,10 @@ class Remote:
         quit_seen = False
         while not self.keys.empty():
             item = self.keys.get_nowait()
-            if item == "quit":
+            if item in ("quit", "\x03"):
                 quit_seen = True
         if quit_seen:
-            self.keys.put_nowait("quit")
+            self.keys.put_nowait("\x03")  # Ctrl+C не теряется на долгой операции
 
     # -- состояние ----------------------------------------------------------- #
     def _is_connected(self) -> bool:
@@ -1007,7 +1281,7 @@ class Remote:
     async def _connect_worker(self) -> None:
         try:
             if self.sim:
-                robot = SimRobot()
+                robot = SimRobot(self._sim_echo)
                 await robot.connect()
                 self.robot = robot
                 self._queue_event("connected", robot.address)
@@ -1407,6 +1681,26 @@ class Remote:
         if self._is_connected() and self.move != "stop" and self._loop is not None:
             self._loop.create_task(self._stop(tr("key-state отключился", "key-state stopped")))
 
+    def _keys_hint(self) -> str:
+        """Короткая строка подсказок для текущего режима (баннер и TUI)."""
+        if self.mode == "editor":
+            return self._prog_hint()
+        if self.mode == "run":
+            return tr("пробел — пауза/продолжить · Esc — стоп · p — редактор программы",
+                      "space — pause/resume · Esc — stop · p — program editor")
+        return tr("q — подключиться · Shift+Q — отключиться · w/a/s/d — ехать · "
+                  "пробел — стоп · p — программа · h — все клавиши · Ctrl+C — выход",
+                  "q — connect · Shift+Q — disconnect · w/a/s/d — drive · "
+                  "space — stop · p — program · h — all keys · Ctrl+C — quit")
+
+    def _print_lines(self, lines) -> None:
+        """Напечатать готовые строки (справка): в TUI они идут в лог."""
+        if self.tui is not None and self.tui.active:
+            self.tui.note_lines((None, line) for line in lines)
+            return
+        for line in lines:
+            print(line, flush=True)
+
     # -- справка и статус ---------------------------------------------------- #
     def _print_banner(self) -> None:
         self._say("info", tr(
@@ -1427,13 +1721,7 @@ class Remote:
         )
         self._say("info", tr(f"скорость {self.speed}, режим: {mode}",
                              f"speed {self.speed}, mode: {mode}"))
-        self._say(
-            "hint",
-            tr("q — подключиться · Shift+Q — отключиться · w/a/s/d — ехать · "
-               "пробел — стоп · p — программа · h — все клавиши · Ctrl+C — выход",
-               "q — connect · Shift+Q — disconnect · w/a/s/d — drive · "
-               "space — stop · p — program · h — all keys · Ctrl+C — quit"),
-        )
+        self._say("hint", self._keys_hint())
 
     def _print_help(self) -> None:
         if self.mode == "editor":
@@ -1511,8 +1799,7 @@ class Remote:
                 "WinAPI (Windows) — авто-стоп по --hold-timeout",
                 "  --key-state-device /dev/input/event7  слушать одну клавиатуру",
             )
-        for line in lines:
-            print(line, flush=True)
+        self._print_lines(lines)
 
     def _print_prog_help(self) -> None:
         self._say("help", tr("клавиши режима программы:", "program mode keys:"))
@@ -1552,8 +1839,7 @@ class Remote:
                 "  Esc           назад в пульт (программа остаётся)",
                 "  h, ?          эта справка (Ctrl+C — выход)",
             )
-        for line in lines:
-            print(line, flush=True)
+        self._print_lines(lines)
 
     def _print_run_help(self) -> None:
         self._say("help", tr("клавиши во время выполнения:", "keys while running:"))
@@ -1573,8 +1859,7 @@ class Remote:
                 "  Shift+Q       отключиться (программа остановится)",
                 "  h, ?          эта справка (Ctrl+C — выход)",
             )
-        for line in lines:
-            print(line, flush=True)
+        self._print_lines(lines)
 
     # -- обработка клавиш и событий ------------------------------------------ #
     def _handle_event(self, item: tuple) -> None:
@@ -1786,9 +2071,11 @@ class Remote:
         self._reader_paused.wait(timeout=1.0)
         self._drain_keys()
         raw = self._pause_terminal_for_editor()
+        self._tui_pause()  # внешнему редактору нужен обычный экран
         try:
             await asyncio.to_thread(subprocess.run, cmd + [str(path)])
         except Exception as exc:  # noqa: BLE001 — редактор может не запуститься
+            self._tui_resume()
             self._say("err", tr(f"редактор не запустился: {exc}",
                                 f"the editor did not start: {exc}"))
             self._resume_terminal_after_editor(raw)
@@ -1797,6 +2084,7 @@ class Remote:
             with contextlib.suppress(OSError):
                 path.unlink()
             return
+        self._tui_resume()
         self._resume_terminal_after_editor(raw)
         self._external_editor.clear()
         self._flush_pending_output()
@@ -1899,6 +2187,10 @@ class Remote:
         self._out(text, end="")
 
     def _prompt_end(self) -> None:
+        if self.tui is not None and self.tui.active:
+            self.prompt = None
+            self.tui.redraw()
+            return
         print(flush=True)
         self.prompt = None
 
@@ -1911,7 +2203,8 @@ class Remote:
         stamp = time.strftime("%Y-%m-%d-%H%M")
         default = self.program_name or tr(f"программа-{stamp}.txt",
                                           f"program-{stamp}.txt")
-        self.prompt = {"kind": "save", "text": "", "default": default}
+        self.prompt = {"kind": "save", "text": "", "default": default,
+                       "title": f"{tr('имя файла', 'file name')} [{default}]"}
         self._prompt_write(f"[save] {tr('имя файла', 'file name')} [{default}]: ")
 
     def _sanitize_name(self, name: str) -> str:
@@ -1986,7 +2279,8 @@ class Remote:
         if len(files) > len(shown):
             self._say("load", tr(f"…и ещё {len(files) - len(shown)}",
                                  f"…and {len(files) - len(shown)} more"))
-        self.prompt = {"kind": "load", "files": shown, "text": ""}
+        self.prompt = {"kind": "load", "files": shown, "text": "",
+                       "title": tr("номер", "number")}
         self._prompt_write(f"[load] {tr('номер', 'number')}: ")
 
     def _describe_file(self, path: Path) -> str:
@@ -2016,7 +2310,9 @@ class Remote:
                 name = self._sanitize_name(prompt["text"].strip() or prompt["default"])
                 self._prompt_end()
                 if (self.program_dir / name).exists():
-                    self.prompt = {"kind": "confirm", "name": name}
+                    self.prompt = {"kind": "confirm", "name": name,
+                                   "title": tr(f"«{name}» уже есть — перезаписать? y/n",
+                                               f"«{name}» already exists — overwrite? y/n")}
                     self._prompt_write(
                         f"[save] {tr(f'«{name}» уже есть — перезаписать? y/n', f'«{name}» already exists — overwrite? y/n')}: "
                     )
@@ -2348,6 +2644,16 @@ class Remote:
             )
             return 2
         self._loop = asyncio.get_running_loop()
+        self._tui_start()
+        try:
+            code = await self._run_screen()
+        finally:
+            self._tui_stop()
+        if code == 0:
+            print(tr("Пока!", "Bye!"), flush=True)
+        return code
+
+    async def _run_screen(self) -> int:
         await self._enable_key_state()
         self._print_banner()
         if self.key_state:
@@ -2379,9 +2685,9 @@ class Remote:
                     item = await self.keys.get()
                     if isinstance(item, tuple):
                         self._handle_event(item)
-                        continue
-                    if not await self._handle_key(item):
+                    elif not await self._handle_key(item):
                         break
+                    self._tui_touch()
             except KeyboardInterrupt:  # на всякий случай (например, сигнал извне)
                 pass
             finally:
@@ -2407,9 +2713,9 @@ class Remote:
                         await self._connect_task
                 was_connected = self._is_connected()
                 await self._cleanup()
+                self._tui_stop()  # итог и «Пока!» — уже на обычном экране
                 self._say("ok", tr("робот остановлен и отключён", "the robot is stopped and disconnected")
                           if was_connected else tr("выход", "exiting"))
-        print(tr("Пока!", "Bye!"), flush=True)
         return 0
 
 
@@ -2670,6 +2976,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help=tr("стартовать в режиме фиксации", "start in latched mode"))
     parser.add_argument("--simulate", action="store_true",
                         help=tr("без Bluetooth: печатать кадры", "no Bluetooth: print frames"))
+    parser.add_argument("--tui", action="store_true",
+                        help=tr("полноэкранный интерфейс: статус сверху, лог, подсказки",
+                                "full-screen interface: status bar, log, hints"))
     parser.add_argument(
         "--key-state-device",
         action="append",
