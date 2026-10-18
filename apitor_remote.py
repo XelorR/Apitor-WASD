@@ -9,9 +9,10 @@
     ] [  (+ -) ... скорость (1..12)     1..8 ......... цвет подсветки
     0 ............ выключить подсветку
     b / B ........ мигнуть подсветкой (цвет при этом не меняется)
-    e / Shift+E .. мотор 3 (аксессуар): вперёд / назад (тумблером)
+    v / V ........ мотор 3 (аксессуар): вперёд / назад (тумблером)
+    e / E ........ править программу во внешнем $EDITOR (в любом режиме)
     Enter ........ выполнить программу (записанный макрос или файл)
-    Shift+Enter .. то же, но без пауз (Shift виден только с key-state)
+    Shift+Enter .. то же, но без пауз (Shift ловит key-state или сам терминал)
     p ............ режим программы (шаги, как у Big Trak / Лунохода)
     m ............ записать макрос: делайте что угодно, стоп — Esc или n
     n ............ закончить запись макроса (то же, что Esc)
@@ -28,8 +29,8 @@
 влево/вправо, пробел — пауза, c — цвет, b — мигнуть, цифры — число шага),
 Enter — запуск. Программа пишется живой строкой; f/g — сохранить/загрузить.
 Esc — вернуться в пульт (программа остаётся), x — очистить программу,
-e или E — правка во внешнем редакторе ($EDITOR/$VISUAL, иначе nvim/nano/vi;
-на время редактора горячие клавиши пульта выключены).
+e или E — правка во внешнем редакторе ($EDITOR/$VISUAL, иначе nvim/nano/vi):
+эта клавиша работает в любом режиме, и из пульта тоже.
 Файлы простые: «вперёд 5», «вправо 2», понимаются и по-русски, и по-английски.
 
 Макрос: нажмите `m` в пульте — пульт запомнит всё, что вы делаете (движение,
@@ -251,7 +252,8 @@ KEYMAP: dict[str, str] = {
     "[": "speed_down", "-": "speed_down", "_": "speed_down",
     "0": "lights_off",
     "b": "blink_led", "B": "blink_led",  # мигнуть подсветкой (в редакторе b — шаг)
-    "e": "m3_fwd", "E": "m3_rev",
+    "v": "m3_fwd", "V": "m3_rev",  # мотор 3 (переехал с e: e — редактор)
+    "e": "edit_external", "E": "edit_external",  # внешний $EDITOR — в любом режиме
     "p": "prog", "P": "prog",
     "m": "record_macro", "M": "record_macro",  # m — начать; стоп — Esc или n
     # обратный проезд: строчная — с паузами, заглавная (с Shift) — без пауз
@@ -953,6 +955,123 @@ def _read_utf8_tail(fd: int, first: bytes) -> bytes:
     return bytes(buf)
 
 
+# --- клавиши с модификаторами (kitty keyboard protocol) -------------------- #
+# Обычный терминал не отличает Shift+Enter от Enter. Если он умеет расширенный
+# режим (kitty, foot, alacritty, wezterm, ghostty, свежий VTE), то сообщает
+# такие клавиши как CSI код;модификаторы u — и Shift+Enter работает даже без
+# key-state. Сначала спрашиваем (CSI ? u: отвечают только те, кто умеет),
+# включаем и при выходе выключаем, чтобы оболочка получила обычный ввод.
+_KEY_PROTO_QUERY = b"\x1b[?u"
+_KEY_PROTO_ON = b"\x1b[>1u"
+_KEY_PROTO_OFF = b"\x1b[<u"
+_KEY_PROTO_SUPPORTED = False   # терминал ответил на запрос «умеешь?»
+_KEY_PROTO_ACTIVE = False      # расширенный ввод включён прямо сейчас
+
+# Shift+цифра или Shift+знак: терминал присылает символ, а не цифру.
+_SHIFTED_SYMBOLS = {
+    "1": "!", "2": "@", "3": "#", "4": "$", "5": "%", "6": "^", "7": "&",
+    "8": "*", "9": "(", "0": ")", "-": "_", "=": "+", "[": "{", "]": "}",
+    ";": ":", "'": '"', ",": "<", ".": ">", "/": "?", "\\": "|", "`": "~",
+}
+
+
+def _decode_csi(seq: bytes) -> str | None:
+    """Тело CSI-последовательности → клавиша («s-enter» для Shift+Enter).
+
+    kitty-протокол: «код;модификаторы u» (Shift+Enter — это 13;2u),
+    xterm modifyOtherKeys: «27;модификаторы;код ~» (27;2;13~).
+    Клавиши без модификаторов приводятся к обычным токенам (13 → enter,
+    27 → esc, 127 → backspace), Ctrl+буква — к управляющему символу,
+    Shift+буква — к заглавной. Незнакомое — None («неинтересная» клавиша).
+    """
+    code_txt = mods_txt = None
+    if seq.endswith(b"u"):                              # kitty: 13;2u
+        parts = seq[:-1].split(b";")
+        if len(parts) in (1, 2):
+            code_txt = parts[0]
+            mods_txt = parts[1] if len(parts) == 2 else b"1"
+    elif seq.startswith(b"27;") and seq.endswith(b"~"):  # xterm: 27;2;13~
+        parts = seq[:-1].split(b";")
+        if len(parts) == 3:
+            mods_txt, code_txt = parts[1], parts[2]
+    if code_txt is None or mods_txt is None:
+        return None
+    code_txt = code_txt.split(b":")[0]      # код:альтернативный код
+    mods = mods_txt.split(b":")             # модификаторы:вид события
+    if mods[-1] == b"3":                    # отпускание клавиши — не нажатие
+        return None
+    try:
+        codepoint = int(code_txt)
+        flags = int(mods[0]) - 1            # 1 — Shift, 2 — Alt, 4 — Ctrl
+    except ValueError:
+        return None
+    shift, ctrl = flags & 1, flags & 4
+    if codepoint == 13:                     # Enter
+        return "s-enter" if shift else "enter"
+    if codepoint == 27:
+        return "esc"
+    if codepoint == 127:
+        return "backspace"
+    if ctrl and 65 <= codepoint <= 122:     # Ctrl+C и родня
+        return chr(codepoint & 0x1F)
+    if 32 <= codepoint < 127:
+        char = chr(codepoint)
+        if shift:
+            char = char.upper() if char.isalpha() else _SHIFTED_SYMBOLS.get(char, char)
+        return char
+    if codepoint > 127:
+        return chr(codepoint)               # кириллица и прочие буквы
+    return None
+
+
+def _write_stdout(data: bytes) -> bool:
+    try:
+        os.write(sys.stdout.fileno(), data)
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def _enable_key_protocol(fd: int) -> None:
+    """Включить расширенные клавиши, если терминал их умеет (иначе тихо нет)."""
+    global _KEY_PROTO_SUPPORTED, _KEY_PROTO_ACTIVE
+    if IS_WINDOWS or not sys.stdout.isatty():
+        return
+    if not _write_stdout(_KEY_PROTO_QUERY):
+        return
+    deadline = time.monotonic() + 0.06
+    buf = b""
+    while time.monotonic() < deadline and len(buf) < 32:
+        byte = _read_byte_timeout(fd, max(0.001, deadline - time.monotonic()))
+        if byte is None:
+            break
+        buf += byte
+        if not (b"\x1b[?".startswith(buf) or buf.startswith(b"\x1b[?")):
+            return      # это не ответ, а нажатие клавиши — не съедаем чужое
+        if buf.startswith(b"\x1b[?") and buf.endswith(b"u"):
+            break
+    if not (buf.startswith(b"\x1b[?") and buf.endswith(b"u")):
+        return          # терминал промолчал: Shift+Enter останется за key-state
+    _KEY_PROTO_SUPPORTED = True
+    _KEY_PROTO_ACTIVE = _write_stdout(_KEY_PROTO_ON)
+
+
+def _key_protocol_off() -> None:
+    """Убрать расширенный ввод: внешнему редактору нужен обычный."""
+    global _KEY_PROTO_ACTIVE
+    if _KEY_PROTO_ACTIVE:
+        _write_stdout(_KEY_PROTO_OFF)
+    _KEY_PROTO_ACTIVE = False
+
+
+def _key_protocol_on() -> None:
+    """Вернуть расширенный ввод после паузы (если терминал умеет)."""
+    global _KEY_PROTO_ACTIVE
+    if _KEY_PROTO_SUPPORTED and not _KEY_PROTO_ACTIVE:
+        _KEY_PROTO_ACTIVE = _write_stdout(_KEY_PROTO_ON)
+
+
+
 def read_key_posix(fd: int) -> str | None:
     """Прочитать одно нажатие; None — неинтересная последовательность.
 
@@ -977,7 +1096,10 @@ def read_key_posix(fd: int) -> str | None:
             seq += more
             if more.isalpha() or more == b"~":
                 break
-        return _ARROWS_FINAL.get(seq[-1:])
+        arrow = _ARROWS_FINAL.get(seq[-1:])
+        if arrow is not None:
+            return arrow
+        return _decode_csi(seq)  # Shift+Enter и другие клавиши с Shift/Ctrl
     if first in (b"\r", b"\n"):
         return "enter"
     if first in (b"\x7f", b"\x08"):
@@ -1063,9 +1185,11 @@ class RawTerminal:
         new[6][termios.VTIME] = 0
         termios.tcsetattr(fd, termios.TCSADRAIN, new)
         termios.tcflush(fd, termios.TCIFLUSH)
+        _enable_key_protocol(fd)  # Shift+Enter из самого терминала
         return self
 
     def __exit__(self, *exc) -> None:
+        _key_protocol_off()
         if not IS_WINDOWS and self._saved is not None:
             with contextlib.suppress(Exception):
                 termios.tcsetattr(self._fd, termios.TCSADRAIN, self._saved)
@@ -2196,8 +2320,8 @@ class Remote:
                 "  a / d         turn left / right        (arrows ← → too)",
                 "  space, Esc    STOP (everything at once)",
                 "  Enter         run the program (a recorded macro or a loaded file)",
-                "  Shift+Enter   run it without pauses (Shift is only visible)",
-                "                with key-state on)",
+                "  Shift+Enter   run it without pauses (Shift comes from key-state or",
+                "                from the terminal itself: kitty, foot, alacritty)",
                 "  ] [  or + -  speed up / down (1..12)",
                 "  Shift (hold)  boost: speed 12, release — the previous speed",
                 "                (needs key-state; Shift+Q still disconnects)",
@@ -2205,7 +2329,8 @@ class Remote:
                 "                5 cyan, 6 blue, 7 purple, 8 white",
                 "  0             lights off",
                 "  b / B         blink the light (its color is kept)",
-                "  e / Shift+E   motor 3 (accessory): forward / back — toggle",
+                "  v / V         motor 3 (accessory): forward / back — toggle",
+                "  e / E         edit the program in $EDITOR (remote or editor mode)",
                 "  p             program mode: enter steps, run, files",
                 "  m / n         record a macro / stop it (m starts, Esc or n — stop)",
                 "                (actions are timed, pauses become waits)",
@@ -2238,7 +2363,8 @@ class Remote:
                 "  a / d         разворот влево/вправо   (стрелки ← → тоже)",
                 "  пробел, Esc   СТОП (мгновенно всё)",
                 "  Enter         выполнить программу (записанный макрос или файл)",
-                "  Shift+Enter   то же, но без пауз (Shift виден только с key-state)",
+                "  Shift+Enter   то же, но без пауз (Shift ловит key-state или сам",
+                "                терминал: kitty, foot, alacritty)",
                 "  ] [  или + -  скорость больше / меньше (1..12)",
                 "  Shift зажать  буст: скорость 12, отпустить — прежняя скорость",
                 "                (нужен key-state; Shift+Q по-прежнему отключает)",
@@ -2246,7 +2372,8 @@ class Remote:
                 "                4 зелёный, 5 голубой, 6 синий, 7 фиолетовый, 8 белый",
                 "  0             выключить подсветку",
                 "  b / B         мигнуть подсветкой (цвет не меняется)",
-                "  e / Shift+E   мотор 3 (аксессуар, если есть): вперёд / назад — тумблер",
+                "  v / V         мотор 3 (аксессуар, если есть): вперёд / назад — тумблер",
+                "  e / E         править программу во внешнем $EDITOR (в обоих режимах)",
                 "  p             режим программы: набор шагов, запуск, файлы",
                 "  m / n         записать макрос / закончить запись (m начинает, "
                 "Esc или n — стоп)",
@@ -2385,7 +2512,8 @@ class Remote:
         if self.recording and action in ("prog", "run", "save_prog", "load_prog",
                                          "clear_prog", "test", "identify",
                                          "rev_back", "rev_back_np",
-                                         "rev_front", "rev_front_np"):
+                                         "rev_front", "rev_front_np",
+                                         "edit_external"):
             self._say("rec", tr("идёт запись макроса — сначала Esc или n (стоп)",
                                 "a macro is being recorded — press Esc or n first"))
             return True
@@ -2413,6 +2541,8 @@ class Remote:
             await self._on_m3(Direction.D1, "вперёд", "forward")
         elif action == "m3_rev":
             await self._on_m3(Direction.D2, "назад", "back")
+        elif action == "edit_external":
+            await self._edit_program_external()
         elif action == "hold":
             self._on_latch(False)
         elif action == "latch":
@@ -2509,6 +2639,7 @@ class Remote:
         """Вернуть терминал в обычный режим на время внешнего редактора."""
         if IS_WINDOWS:
             return None
+        _key_protocol_off()  # редактору — обычный ввод
         fd = sys.stdin.fileno()
         try:
             raw = termios.tcgetattr(fd)
@@ -2520,14 +2651,19 @@ class Remote:
 
     def _resume_terminal_after_editor(self, raw) -> None:
         """Вернуть "сырой" режим терминала после внешнего редактора."""
-        if IS_WINDOWS or raw is None:
+        if IS_WINDOWS:
             return
-        fd = sys.stdin.fileno()
-        with contextlib.suppress(Exception):
-            termios.tcsetattr(fd, termios.TCSADRAIN, raw)
+        if raw is not None:
+            fd = sys.stdin.fileno()
+            with contextlib.suppress(Exception):
+                termios.tcsetattr(fd, termios.TCSADRAIN, raw)
+        _key_protocol_on()  # вернуть расширенные клавиши
 
     async def _edit_program_external(self) -> None:
-        """E: отдать текущую программу внешнему редактору и загрузить обратно."""
+        """e/E: отдать текущую программу внешнему редактору и загрузить обратно.
+
+        Клавиша работает в любом режиме: и в пульте, и в редакторе.
+        """
         cmd = self._editor_command()
         if cmd is None:
             self._say("warn", tr(
@@ -2638,8 +2774,10 @@ class Remote:
             await self._stop_if_moving(tr("запись макроса", "macro recording"))
             self._stop_recording()  # Esc или n — стоп, и макрос готов
             return True
-        if key == "enter" and self._shift_held():
-            await self._on_run_key(drop_pauses=True)  # Shift+Enter — без пауз
+        if key == "s-enter" or (key == "enter" and self._shift_held()):
+            # Shift+Enter: прогон без пауз. Shift приходит из key-state,
+            # а если его нет — из самого терминала (CSI-u, см. выше).
+            await self._on_run_key(drop_pauses=True)
             return True
         if self.mode == "editor" and await self._handle_editor_key(key):
             return True
@@ -2651,9 +2789,6 @@ class Remote:
         return await self._handle_action(action)
 
     async def _handle_editor_key(self, key: str) -> bool:
-        if key in ("e", "E"):  # маленькая e — тоже редактор (в пульте e — мотор 3)
-            await self._edit_program_external()
-            return True
         result = self.editor.key(key, time.monotonic())
         if result is None:
             return False
