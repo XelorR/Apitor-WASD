@@ -8,6 +8,7 @@
     w a s d ...... ехать                пробел / Esc . стоп
     ] [  (+ -) ... скорость (1..12)     1..8 ......... цвет подсветки
     0 ............ выключить подсветку
+    b / B ........ мигнуть подсветкой (цвет при этом не меняется)
     e / Shift+E .. мотор 3 (аксессуар): вперёд / назад (тумблером)
     p ............ режим программы (шаги, как у Big Trak / Лунохода)
     R ............ в пульте: запустить последнюю программу (если была)
@@ -15,7 +16,7 @@
     J ............ журнал прогонов вкл/выкл
     t ............ тест-поездка (проверить направления)
     i ............ моторы по одному (калибровка)
-    l ............ режим: удержание / фиксация
+    k / l ........ режим движения: удержание / фиксация
     h, ? ......... справка              Ctrl+C ....... выход
 
 Режим программы: нажмите `p` — набирайте шаги (w/a/s/d — вперёд/назад/
@@ -201,6 +202,7 @@ KEYMAP: dict[str, str] = {
     "]": "speed_up", "=": "speed_up", "+": "speed_up",
     "[": "speed_down", "-": "speed_down", "_": "speed_down",
     "0": "lights_off",
+    "b": "blink_led", "B": "blink_led",  # мигнуть подсветкой (в редакторе b — шаг)
     "e": "m3_fwd", "E": "m3_rev",
     "p": "prog", "P": "prog",
     "r": "run_last", "R": "run_last",
@@ -1228,6 +1230,20 @@ class Remote:
             self.led_color = color
             self._say("led", tr(f"подсветка: {name}", f"light: {name}"))
 
+    async def _led_blink(self) -> None:
+        """B: мигнуть подсветкой, не меняя её состояние («выкл.» так и остаётся)."""
+        if not self._is_connected():
+            self._say("warn", tr("нет подключения — нажмите q",
+                                 "not connected — press q"))
+            return
+        base = self.led_color
+        flash = Color.WHITE if base == Color.OFF else Color.OFF
+        if not await self._call(self.robot.all_leds, flash):
+            return
+        await asyncio.sleep(self.blink_time)
+        if await self._call(self.robot.all_leds, base):
+            self._say("led", tr("подсветка мигнула", "the light blinked"))
+
     async def _on_m3(self, direction: Direction, label_ru: str, label_en: str) -> None:
         if not self._is_connected():
             self._say("warn", tr("нет подключения — нажмите q",
@@ -1387,6 +1403,7 @@ class Remote:
                 "  1..8          light: 1 red, 2 orange, 3 yellow, 4 green,",
                 "                5 cyan, 6 blue, 7 purple, 8 white",
                 "  0             lights off",
+                "  b / B         blink the light (its color is kept)",
                 "  e / Shift+E   motor 3 (accessory): forward / back — toggle",
                 "  p             program mode: enter steps, run, files",
                 "  x             clear the program (stay in the current mode)",
@@ -1418,6 +1435,7 @@ class Remote:
                 "  1..8          подсветка: 1 красный, 2 оранжевый, 3 жёлтый,",
                 "                4 зелёный, 5 голубой, 6 синий, 7 фиолетовый, 8 белый",
                 "  0             выключить подсветку",
+                "  b / B         мигнуть подсветкой (цвет не меняется)",
                 "  e / Shift+E   мотор 3 (аксессуар, если есть): вперёд / назад — тумблер",
                 "  p             режим программы: набор шагов, запуск, файлы",
                 "  x             очистить программу (режим не меняется)",
@@ -1536,7 +1554,8 @@ class Remote:
         if self.mode == "run" and action not in ("connect", "disconnect", "journal", "help"):
             return True
         # В редакторе калибровка и мотор 3 не работают (чтобы не дёрнуть робота).
-        if self.mode == "editor" and action in ("test", "identify", "m3_fwd", "m3_rev", "hold", "latch"):
+        if self.mode == "editor" and action in ("test", "identify", "m3_fwd", "m3_rev",
+                                                "hold", "latch", "blink_led"):
             return True
         if action == "connect":
             await self._on_connect_key()
@@ -1553,6 +1572,8 @@ class Remote:
             await self._on_speed(-1)
         elif action == "lights_off":
             await self._set_led(Color.OFF, tr("выключена", "off"))
+        elif action == "blink_led":
+            await self._led_blink()
         elif action.startswith("color:"):
             entry = COLOR_BY_KEY[action.split(":", 1)[1]]
             await self._set_led(entry[0], entry[2] if LANG == "en" else entry[1])
