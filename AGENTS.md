@@ -9,6 +9,7 @@ Single-file Python CLI remote for Apitor robots (R, J, S, Q, X, Wheels) over Blu
 - Run: `.venv/bin/python apitor_remote.py` — requires a real terminal (exits 2 if stdin is not a TTY)
 - Without a robot: `.venv/bin/python apitor_remote.py --simulate` — prints BLE command frames to stdout instead of connecting (use this to verify changes)
 - Run a program file: `.venv/bin/python apitor_remote.py --program examples/квадрат.txt` (`examples/square.txt` is the English version)
+- Tests: `.venv/bin/python tests/run_tests.py` (all `tests/test_*.py` in parallel, `--jobs 1` sequential, `-k NAME` filter, `--list` to enumerate; README «Тесты»). Each suite is a standalone script (plain PTY/subprocess, no pytest) runnable on its own; `tests/harness.py` gives `ROOT`/`PY`/`APP`/`NOKS`/`fresh_work()` and points `HOME` at a throwaway temp dir, so the real `~/.config`, `programs/` and `/dev/input` are never touched. Keep the suites (and `tests/test_apitor22.py`'s docs-sync check) in sync when hotkeys, flags or wording change.
 - Build the printable kids' manual: `docs/build.sh` (needs `pandoc`, `graphviz`, `calibre`; markdown + `docs/diagrams/*.dot` → `docs/img/*.svg` + `docs/instructions-{ru,en}.pdf`)
 - Exit codes: `0` clean quit, `2` error (bad profile, unreadable program file, no TTY), `130` Ctrl+C
 
