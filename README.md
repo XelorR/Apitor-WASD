@@ -526,11 +526,14 @@ Shift — это сразу три вещи:
 
 * `docs/instructions-ru.md`, `docs/instructions-en.md` — текст;
 * `docs/diagrams/*.dot` — схемы (graphviz), `docs/style.css` — оформление;
+* `docs/pageref.py` — подставляет номера страниц в ссылки «см. раздел 5,
+  стр. 6» (метки `{{page:N}}` в тексте);
 * `docs/instructions-ru.pdf`, `docs/instructions-en.pdf` — готовые PDF
-  (A4, номера страниц, каждая глава с новой страницы).
+  (A4, номера страниц, каждая глава с новой страницы, содержание с номерами).
 
-Пересобрать всё (нужны `pandoc`, `graphviz` и `calibre`; на Debian/Ubuntu —
-`sudo apt install pandoc graphviz calibre`):
+Пересобрать всё (нужны `pandoc`, `graphviz`, `calibre` и `pdftotext` из
+poppler; на Debian/Ubuntu — `sudo apt install pandoc graphviz calibre
+poppler-utils`):
 
 ```bash
 docs/build.sh          # схемы, HTML и PDF для обоих языков

@@ -9,22 +9,22 @@
 
 # Table of contents
 
-1. What the remote is
-2. Meet the robot
-3. The first connection
-4. How to drive
-5. The light
-6. Three remote modes
-7. Your first program
-8. The “Square” program
-9. The “Firefly” program
-10. Challenges
-11. Program files and the editor
-12. The macro and the way back
-13. If something is wrong
-14. For grown-ups: install, flags, tuning
-15. Mini dictionary
-16. Cheat sheet
+1. What the remote is — {{page:1}}
+2. Meet the robot — {{page:2}}
+3. The first connection — {{page:3}}
+4. How to drive — {{page:4}}
+5. The light — {{page:5}}
+6. Three remote modes — {{page:6}}
+7. Your first program — {{page:7}}
+8. The “Square” program — {{page:8}}
+9. The “Firefly” program — {{page:9}}
+10. Challenges — {{page:10}}
+11. Program files and the editor — {{page:11}}
+12. The macro and the way back — {{page:12}}
+13. If something is wrong — {{page:13}}
+14. For grown-ups: install, flags, tuning — {{page:14}}
+15. Mini dictionary — {{page:15}}
+16. Cheat sheet — {{page:16}}
 
 # 1. What the remote is
 
@@ -47,8 +47,8 @@ When everything is ready, you see something like this:
 ```
 
 The remote is not connected to the robot yet — that happens when you
-press `q` (section 3). If there is no welcome line at all, ask a grown-up:
-section 14.
+press `q` (section 3, page {{page:3}}). If there is no welcome line at
+all, ask a grown-up: section 14, page {{page:14}}.
 
 What the remote cannot do: it does not drive the robot from far away
 (stay within a few metres), it does not replace the official app, and it
@@ -63,7 +63,7 @@ cannot carry the robot up the stairs.
 * **Control block** — the robot’s “brain” and the battery. If the robot
   stays silent, the battery probably needs charging.
 * **LED light** — a small lamp you can control from the keyboard
-  (section 5).
+  (section 5, page {{page:5}}).
 * **Motor 3** — for extra mechanisms, if your model has them. Key `v`
   turns it forward, `V` turns it backward (it is a switch: press
   once to start, press again to stop).
@@ -125,7 +125,8 @@ There are two ways to drive, switched with `k` and `l`:
 
 <div class="tip">
 The `Shift` boost works only when the remote can watch real key presses
-(on Linux that needs a permission, see section 14). If boost does not
+(on Linux that needs a permission, see section 14, page {{page:14}}).
+If boost does not
 come on, just drive at the usual speed. And remember: `Shift+Q`
 disconnects the robot — that is not the boost.
 </div>
@@ -133,7 +134,7 @@ disconnects the robot — that is not the boost.
 <div class="mission">
 **Challenge “Warm-up”.** Put the robot in the middle of the room. Drive
 forward for two counts, stop, come back. Then spin a quarter turn
-(`a` or `d`). Done? You are ready for section 7.
+(`a` or `d`). Done? You are ready for section 7, page {{page:7}}.
 </div>
 
 # 5. The light
@@ -161,7 +162,8 @@ ready on yellow. Then swap.
 
 ![The three modes: remote, program, run — and the keys that move you between them](img/modes-en.svg){width=62%}
 
-* **Remote** — the keys drive the robot (sections 4 and 5).
+* **Remote** — the keys drive the robot (sections 4 and 5, pages {{page:4}}
+  and {{page:5}}).
 * **Program** — you collect the steps; the robot stands still and waits.
 * **Run** — the robot performs the program by itself.
 
@@ -173,7 +175,7 @@ How to move around:
 | `Enter` | start the program (the run begins) |
 | `Esc` | back to the remote (the program stays in memory) |
 | `Enter` | drive the program (with `Shift` — without pauses) |
-| `r` `t` | in the remote: drive the route back (section 12) |
+| `r` `t` | in the remote: drive the route back (section 12, page {{page:12}}) |
 
 A trick: if you press `p` while the robot is driving, the remote stops it
 and opens the program. You can leave the program mode only with `Esc` —
@@ -251,7 +253,7 @@ r4      repeat everything four times
 ```
 
 Press `Enter` — and away it goes. The very same program can be written
-with words in a program file (section 11):
+with words in a program file (section 11, page {{page:11}}):
 
 ```
 repeat 4
@@ -309,7 +311,7 @@ masters.
 2. ★ **Traffic light.** Program: red, pause, green, blink, drive.
 3. ★★ **The snake.** Forward, turn right, forward, turn left — three
    times.
-4. ★★ **Two squares.** The square from section 8 with `repeat 2` — the
+4. ★★ **Two squares.** The square from section 8 (page {{page:8}}) with `repeat 2` — the
    robot must come back to where it started.
 5. ★★ **The dance.** Spin, blink and change colours so that the
    grown-ups can guess the tune.
@@ -421,7 +423,7 @@ switches at another moment, when you reach that stretch (in the picture
 with `r` or `t`) does the same on the way back. Capitals come by
 themselves, and `Shift+Enter` is learned from the terminal itself
 (kitty, foot, alacritty and others) — or from the keyboard tracking,
-when it is on (a grown-up knows what that is: section 14).
+when it is on (a grown-up knows what that is: section 14, page {{page:14}}).
 </div>
 
 The way back does not spoil the program: it is built on the fly, so
@@ -435,7 +437,7 @@ looks the other way.
 | What happened | What to do |
 |---|---|
 | `[err] could not connect` | is the robot on? not busy with a phone? press `q` again |
-| The robot drives backward instead of forward | it is a setting: section 14, “calibration” |
+| The robot drives backward instead of forward | it is a setting: section 14 (page {{page:14}}), “calibration” |
 | The robot is too slow or too fast | `]` and `[` change the speed (1…12) |
 | The keys do nothing | the remote listens to the keyboard only while its window is active; press `h` for a hint. Do not type `w a s d` in other windows |
 | `Enter` does not start the program | look at the `[prog]` line: `0 steps` means the program is empty |
@@ -519,22 +521,23 @@ the pictures, the HTML and the PDFs:
 docs/build.sh
 ```
 
-It needs `pandoc`, `graphviz` and `calibre` (see `docs/README.md`).
+It needs `pandoc`, `graphviz`, `calibre` and `pdftotext` (poppler) — see
+`docs/README.md`.
 
 # 15. Mini dictionary
 
-* **Remote** — the program that drives the robot from your keyboard.
-* **Macro** — a recording of your trip (`m`) that becomes a program.
-* **The way back** — the robot drives the same route from the end (`r`, `t`).
-* **Step** — one action of a program: drive, turn, blink.
-* **Program** — a list of steps the robot performs by itself.
-* **Run** — performing the program from start to finish.
-* **Repeat** — how many times the whole program runs (`r` or `repeat`).
-* **Hold** — the mode where the robot drives while you hold the key.
-* **Latched** — the mode where the robot drives until you press `space`.
-* **Boost** — speeding up to 12 while `Shift` is held.
-* **Draft** — the program the remote remembers between launches.
-* **Terminal** — the window where the remote lives; keys are pressed in it.
+* **Remote** — the program that drives the robot from your keyboard (section 1, page {{page:1}}).
+* **Macro** — a recording of your trip (`m`) that becomes a program (section 12, page {{page:12}}).
+* **The way back** — the robot drives the same route from the end (`r`, `t`, section 12, page {{page:12}}).
+* **Step** — one action of a program: drive, turn, blink (section 7, page {{page:7}}).
+* **Program** — a list of steps the robot performs by itself (section 7, page {{page:7}}).
+* **Run** — performing the program from start to finish (section 6, page {{page:6}}).
+* **Repeat** — how many times the whole program runs (`r` or `repeat`, section 8, page {{page:8}}).
+* **Hold** — the mode where the robot drives while you hold the key (section 4, page {{page:4}}).
+* **Latched** — the mode where the robot drives until you press `space` (section 4, page {{page:4}}).
+* **Boost** — speeding up to 12 while `Shift` is held (section 14, page {{page:14}}).
+* **Draft** — the program the remote remembers between launches (section 11, page {{page:11}}).
+* **Terminal** — the window where the remote lives; keys are pressed in it (section 1, page {{page:1}}).
 
 # 16. Cheat sheet
 

@@ -13,3 +13,7 @@ programs/_edit_*.txt
 
 # Собранный HTML инструкций (генерируется docs/build.sh из markdown)
 docs/*.html
+
+# Сборка инструкций: текст с проставленными номерами страниц и карта страниц
+docs/*.pages.md
+docs/*.pages.json*
