@@ -1,6 +1,6 @@
 # Apitor-WASD
 
-Single-file Python CLI remote for Apitor robots (R, J, S, Q, X, Wheels) over Bluetooth LE via the `apitor-ble` library. The whole app is one module, `apitor_remote.py` (~3700 lines). There are **no tests, no CI, no packages, no lint/typecheck/format config** — do not look for `pytest`, `ruff`, `mypy`, or a `pyproject.toml`.
+Single-file Python CLI remote for Apitor robots (R, J, S, Q, X, Wheels) over Bluetooth LE via the `apitor-ble` library. The whole app is one module, `apitor_remote.py` (~3700 lines). The regression suite is hand-rolled plain Python in `tests/` (no pytest, no CI, no packages, no lint/typecheck/format config — do not look for `ruff`, `mypy`, or a `pyproject.toml`). License: GPL-3.0 (see `LICENSE`).
 
 ## Commands
 

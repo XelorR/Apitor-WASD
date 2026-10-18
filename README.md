@@ -666,6 +666,7 @@ key-state, `run.sh`. Каждый набор — отдельный процес
 * `tests/` — регрессия (наборы `test_*.py`, общий `harness.py`, прогон `run_tests.py`).
 * `docs/` — печатная инструкция для детей (RU+EN, markdown → PDF,
   собирается `docs/build.sh`; там же схемы `.dot` и готовые PDF).
+* `LICENSE` — лицензия GPL-3.0.
 * `.venv/` — виртуальное окружение Python (создаётся при установке, в git не хранится).
 
 Пульт хранит в `~/.config/apitor-control/`: `addresses.json` (кэш адресов),

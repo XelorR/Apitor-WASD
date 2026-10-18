@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-only
 """apitor_remote.py — пульт с горячими клавишами для Apitor Robot R.
 
 Управляет роботом по Bluetooth LE через библиотеку `apitor-ble`.

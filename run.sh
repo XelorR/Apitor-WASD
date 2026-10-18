@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-only
 # Пульт Apitor: запуск одним двойным щелчком.
 #
 # Скрипт сам всё подготовит рядом с собой:
