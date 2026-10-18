@@ -1,0 +1,17 @@
+// Программа «квадрат»: четыре стороны по кругу (значки одни для всех языков).
+// Собирается docs/build.sh в docs/img/square.svg
+digraph square {
+  graph [rankdir=LR, bgcolor="transparent", pad=0.15, nodesep=0.40, ranksep=0.55];
+  node  [fontname="Noto Sans", fontsize=15, shape=box, style="rounded,filled",
+         fillcolor="#eef3fb", color="#4a6fa5", penwidth=1.4, margin="0.22,0.13"];
+  edge  [color="#8a97a8", penwidth=1.4, arrowsize=0.8];
+
+  fwd [label="↑ 4", fillcolor="#dff0d8", color="#5a9e4b"];
+  turn [label="→ 2", fillcolor="#fdf0d5", color="#c99a2e"];
+  blink [label="✦ 2", fillcolor="#f3e6f7", color="#9b6bb5"];
+
+  fwd -> turn;
+  turn -> blink;
+  blink -> fwd [constraint=false, style=dashed, color="#c99a2e",
+                label="× 4", fontname="Noto Sans", fontsize=14, fontcolor="#a9791e"];
+}

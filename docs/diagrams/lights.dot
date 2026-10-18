@@ -1,0 +1,21 @@
+// Цвета подсветки: клавиши 1..8 и 0 (значки одни для всех языков).
+// Собирается docs/build.sh в docs/img/lights.svg
+digraph lights {
+  graph [rankdir=LR, bgcolor="transparent", pad=0.12, nodesep=0.16, ranksep=0.5];
+  node  [shape=box, style="filled", fontname="Noto Sans", fontsize=13,
+         fixedsize=true, width=0.60, height=0.60, label="", penwidth=1.6,
+         fontcolor="#232a33"];
+  edge  [style=invis];
+
+  1 [fillcolor="#e04b3c", color="#a83528", xlabel="1"];
+  2 [fillcolor="#e8862c", color="#b06318", xlabel="2"];
+  3 [fillcolor="#e8c62c", color="#b09418", xlabel="3"];
+  4 [fillcolor="#4caf50", color="#2f7a33", xlabel="4"];
+  5 [fillcolor="#29b6d8", color="#1b83a0", xlabel="5"];
+  6 [fillcolor="#2c6fd8", color="#1c4d9e", xlabel="6"];
+  7 [fillcolor="#8a4fd8", color="#5f329b", xlabel="7"];
+  8 [fillcolor="#ffffff", color="#9aa6b2", xlabel="8"];
+  off [fillcolor="#ffffff", color="#232a33", xlabel="0"];
+
+  1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 8 -> off;
+}

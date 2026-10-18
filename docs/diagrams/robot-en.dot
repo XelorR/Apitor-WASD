@@ -1,0 +1,25 @@
+// Robot anatomy: wheels, motors, LED light (English version).
+// Built by docs/build.sh into docs/img/robot-en.svg
+digraph robot {
+  graph [rankdir=TB, bgcolor="transparent", pad=0.14, nodesep=0.40, ranksep=0.40];
+  node  [fontname="Noto Sans", fontsize=12, shape=box, style="rounded,filled",
+         fillcolor="#eef3fb", color="#4a6fa5", penwidth=1.3, margin="0.15,0.08"];
+  edge  [style=invis];
+
+  subgraph cluster_body {
+    label="the robot (top view)"; fontname="Noto Sans"; fontsize=12;
+    fontcolor="#2f5d8a"; style="rounded"; color="#4a6fa5"; penwidth=1.6;
+
+    led [label="LED light", fillcolor="#fdf0d5", color="#c99a2e"];
+    wheel_l [label="motor 1\nleft wheel", fillcolor="#dff0d8", color="#5a9e4b"];
+    brain [label="control block\nbattery inside"];
+    wheel_r [label="motor 2\nright wheel", fillcolor="#dff0d8", color="#5a9e4b"];
+    m3 [label="motor 3 — accessory (if any)", fillcolor="#f3e6f7", color="#9b6bb5"];
+
+    { rank=same; wheel_l; brain; wheel_r; }
+    led -> brain;
+    brain -> m3;
+    wheel_l -> brain;
+    brain -> wheel_r;
+  }
+}

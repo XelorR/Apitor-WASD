@@ -1,0 +1,31 @@
+// Обложка: дружелюбный робот (без слов — годится для обоих языков).
+// Собирается docs/build.sh в docs/img/cover.svg
+digraph cover {
+  graph [bgcolor="transparent", pad=0.18, ranksep=0.42, nodesep=0.55];
+  node  [fontname="Noto Sans", penwidth=1.8, label=""];
+  edge  [color="#4a6fa5", penwidth=2.2, arrowsize=0.6];
+
+  lamp [shape=circle, style=filled, fillcolor="#f0c04a", color="#c99a2e",
+        width=0.44, fixedsize=true];
+  eye_l [shape=circle, style=filled, fillcolor="#232a33", color="#232a33",
+         width=0.30, fixedsize=true];
+  eye_r [shape=circle, style=filled, fillcolor="#232a33", color="#232a33",
+         width=0.30, fixedsize=true];
+  body [shape=box, style="rounded,filled", fillcolor="#eef3fb", color="#4a6fa5",
+        width=2.9, height=1.7, fixedsize=true];
+  wheel_l [shape=circle, style=filled, fillcolor="#5a9e4b", color="#2f7a33",
+           width=0.90, fixedsize=true];
+  wheel_c [shape=circle, style=filled, fillcolor="#5a9e4b", color="#2f7a33",
+           width=0.90, fixedsize=true];
+  wheel_r [shape=circle, style=filled, fillcolor="#5a9e4b", color="#2f7a33",
+           width=0.90, fixedsize=true];
+
+  lamp -> eye_l [style=invis];
+  { rank=same; eye_l; eye_r; }
+  eye_l -> eye_r [style=invis];
+  eye_l -> body [style=invis];
+  eye_r -> body [style=invis];
+  { rank=same; wheel_l; wheel_c; wheel_r; }
+  body -> wheel_c [style=invis];
+  wheel_l -> wheel_c -> wheel_r [style=invis];
+}

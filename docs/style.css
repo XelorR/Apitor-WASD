@@ -1,0 +1,87 @@
+/* Оформление печатных инструкций (docs/instructions-*.md).
+ *
+ * Один и тот же CSS используется и для HTML в браузере, и для PDF
+ * (ebook-convert, см. docs/build.sh). Всё оформление — обычный CSS без
+ * внешних зависимостей, шрифты берутся из системы.
+ */
+
+@page { size: A4; margin: 14mm 14mm 16mm 14mm; }
+
+body {
+  font-family: "Noto Sans", "DejaVu Sans", sans-serif;
+  font-size: 11pt;
+  line-height: 1.5;
+  color: #232a33;
+}
+
+/* Обложка своя, шапку с названием от pandoc не показываем. */
+#title-block-header { display: none; }
+
+h1 {
+  font-size: 21pt;
+  color: #b3402a;
+  border-bottom: 3px solid #f0c04a;
+  padding-bottom: 3pt;
+  margin: 0 0 10pt 0;
+}
+h2 { font-size: 14pt; color: #2f5d8a; margin: 14pt 0 4pt 0; }
+h3 { font-size: 12pt; color: #2f5d8a; margin: 11pt 0 3pt 0; }
+
+p { margin: 5pt 0; }
+a { color: #2f5d8a; }
+
+ul, ol { margin: 4pt 0; padding-left: 20pt; }
+li { margin: 2pt 0; }
+
+code {
+  font-family: "Noto Sans Mono", "DejaVu Sans Mono", monospace;
+  font-size: 0.95em;
+  background: #f2f4f7;
+  padding: 0 2pt;
+  border-radius: 2pt;
+}
+pre {
+  background: #f6f7f4;
+  border-left: 4px solid #9db4c8;
+  padding: 6pt 8pt;
+  margin: 6pt 0;
+  font-family: "Noto Sans Mono", "DejaVu Sans Mono", monospace;
+  font-size: 9.5pt;
+  line-height: 1.35;
+  white-space: pre-wrap;
+}
+pre code { background: none; padding: 0; font-size: 1em; }
+
+table { border-collapse: collapse; width: 100%; margin: 6pt 0; }
+th, td { border: 1px solid #9aa6b2; padding: 3pt 5pt; text-align: left; vertical-align: top; }
+th { background: #eef3fb; }
+
+figure { margin: 9pt 0; text-align: center; }
+figure img { max-width: 100%; }
+figcaption { font-size: 9.5pt; color: #55606d; margin-top: 3pt; }
+img { max-width: 100%; }
+
+/* Цветные врезки: подсказка, осторожно, испытание. */
+.tip, .warn, .mission {
+  padding: 5pt 8pt;
+  margin: 8pt 0;
+  border-radius: 3pt;
+  border-left: 4px solid;
+}
+.tip { background: #fff8e1; border-color: #e8b93a; }
+.warn { background: #fdecea; border-color: #d9534f; }
+.mission { background: #eef9ef; border-color: #5a9e4b; }
+.tip > p:first-child, .warn > p:first-child, .mission > p:first-child { margin-top: 0; }
+.tip > p:last-child, .warn > p:last-child, .mission > p:last-child { margin-bottom: 0; }
+
+/* Обложка. */
+.cover { text-align: center; margin-top: 40mm; }
+.cover .big { font-size: 40pt; font-weight: bold; color: #b3402a; margin: 0; line-height: 1.1; }
+.cover .sub { font-size: 16pt; color: #2f5d8a; margin-top: 8pt; }
+.cover .who { font-size: 12pt; color: #55606d; margin-top: 4pt; }
+.cover img { display: block; margin: 12mm auto 0; }
+.cover .ver { font-size: 9.5pt; color: #8a97a8; margin-top: 16mm; }
+
+.pagebreak { break-after: page; page-break-after: always; height: 0; }
+.small { font-size: 9.5pt; color: #55606d; }
+.big-key { font-size: 13pt; }

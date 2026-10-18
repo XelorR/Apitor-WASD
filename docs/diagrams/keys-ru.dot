@@ -1,0 +1,46 @@
+// Клавиши пульта -> что делает робот (русская версия).
+// Собирается docs/build.sh в docs/img/keys-ru.svg
+digraph keys {
+  graph [rankdir=TB, bgcolor="transparent", pad=0.12, nodesep=0.35, ranksep=0.30];
+  node  [fontname="Noto Sans", fontsize=13, shape=box, style="rounded,filled",
+         fillcolor="#eef3fb", color="#4a6fa5", penwidth=1.3, margin="0.16,0.07"];
+  edge  [fontname="Noto Sans", fontsize=11, color="#8a97a8", arrowsize=0.7, penwidth=1.3];
+
+  w [label="w   ↑", fillcolor="#dff0d8", color="#5a9e4b"];
+  fwd [label="едем вперёд", shape=ellipse, fillcolor="#ffffff", margin="0.18,0.06"];
+  s [label="s   ↓", fillcolor="#dff0d8", color="#5a9e4b"];
+  back [label="едем назад", shape=ellipse, fillcolor="#ffffff", margin="0.18,0.06"];
+  a [label="a   ←", fillcolor="#fdf0d5", color="#c99a2e"];
+  turn_l [label="крутимся влево", shape=ellipse, fillcolor="#ffffff", margin="0.18,0.06"];
+  d [label="d   →", fillcolor="#fdf0d5", color="#c99a2e"];
+  turn_r [label="крутимся вправо", shape=ellipse, fillcolor="#ffffff", margin="0.18,0.06"];
+  space [label="пробел / Esc", fillcolor="#fdecea", color="#d9534f"];
+  stop [label="СТОП", shape=ellipse, fillcolor="#fdecea", color="#d9534f", margin="0.18,0.06"];
+  shift [label="Shift (держать)", fillcolor="#f3e6f7", color="#9b6bb5"];
+  boost [label="буст: скорость 12", shape=ellipse, fillcolor="#f3e6f7", color="#9b6bb5", margin="0.18,0.06"];
+
+  { rank=same; w; fwd; }
+  { rank=same; s; back; }
+  { rank=same; a; turn_l; }
+  { rank=same; d; turn_r; }
+  { rank=same; space; stop; }
+  { rank=same; shift; boost; }
+
+  w -> fwd;
+  s -> back;
+  a -> turn_l;
+  d -> turn_r;
+  space -> stop;
+  shift -> boost [style=dashed];
+
+  fwd -> back [style=invis, weight=20];
+  back -> turn_l [style=invis, weight=20];
+  turn_l -> turn_r [style=invis, weight=20];
+  turn_r -> stop [style=invis, weight=20];
+  stop -> boost [style=invis, weight=20];
+  w -> s [style=invis, weight=20];
+  s -> a [style=invis, weight=20];
+  a -> d [style=invis, weight=20];
+  d -> space [style=invis, weight=20];
+  space -> shift [style=invis, weight=20];
+}

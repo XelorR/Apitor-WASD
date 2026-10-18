@@ -1,0 +1,25 @@
+// Устройство робота: колёса, моторы, светодиод (русская версия).
+// Собирается docs/build.sh в docs/img/robot-ru.svg
+digraph robot {
+  graph [rankdir=TB, bgcolor="transparent", pad=0.14, nodesep=0.40, ranksep=0.40];
+  node  [fontname="Noto Sans", fontsize=12, shape=box, style="rounded,filled",
+         fillcolor="#eef3fb", color="#4a6fa5", penwidth=1.3, margin="0.15,0.08"];
+  edge  [style=invis];
+
+  subgraph cluster_body {
+    label="робот (вид сверху)"; fontname="Noto Sans"; fontsize=12;
+    fontcolor="#2f5d8a"; style="rounded"; color="#4a6fa5"; penwidth=1.6;
+
+    led [label="светодиод (подсветка)", fillcolor="#fdf0d5", color="#c99a2e"];
+    wheel_l [label="мотор 1\nлевое колесо", fillcolor="#dff0d8", color="#5a9e4b"];
+    brain [label="блок управления\nбатарейка внутри"];
+    wheel_r [label="мотор 2\nправое колесо", fillcolor="#dff0d8", color="#5a9e4b"];
+    m3 [label="мотор 3 — аксессуар (если есть)", fillcolor="#f3e6f7", color="#9b6bb5"];
+
+    { rank=same; wheel_l; brain; wheel_r; }
+    led -> brain;
+    brain -> m3;
+    wheel_l -> brain;
+    brain -> wheel_r;
+  }
+}

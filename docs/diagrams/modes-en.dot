@@ -1,0 +1,19 @@
+// The three remote modes and how to move between them (English version).
+// Built by docs/build.sh into docs/img/modes-en.svg
+digraph modes {
+  graph [rankdir=TB, bgcolor="transparent", pad=0.14, nodesep=0.45, ranksep=0.55];
+  node  [fontname="Noto Sans", fontsize=13, shape=box, style="rounded,filled",
+         fillcolor="#eef3fb", color="#4a6fa5", penwidth=1.5, margin="0.20,0.11"];
+  edge  [fontname="Noto Sans", fontsize=11, color="#8a97a8", arrowsize=0.8, penwidth=1.4,
+         fontcolor="#55606d"];
+
+  remote [label="REMOTE\nw a s d — you drive", fillcolor="#dff0d8", color="#5a9e4b"];
+  editor [label="PROGRAM\ncollect the steps", fillcolor="#fdf0d5", color="#c99a2e"];
+  run [label="RUN\nthe robot drives itself", fillcolor="#f3e6f7", color="#9b6bb5"];
+
+  remote -> editor [label="p"];
+  editor -> run [label="Enter"];
+  run -> editor [label="p   (edit)", constraint=false];
+  run -> remote [label="Esc", constraint=false];
+  editor -> remote [label="Esc", constraint=false];
+}

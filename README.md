@@ -350,6 +350,28 @@ python3 -m venv .venv
 Робот едет назад вместо вперёд — попробуйте `--flip-left --flip-right` (оба колеса).
 Клавиша `i` поможет понять, какой порт крутит какое колесо.
 
+## Инструкция для детей (`docs/`)
+
+В `docs/` лежит «Большая инструкция для юных пилотов» — печатная книжка для
+детей 6–15 лет: подключение, поездки, первые программы, испытания,
+словарик и шпаргалка. Русская и английская версии собираются из общих
+исходников:
+
+* `docs/instructions-ru.md`, `docs/instructions-en.md` — текст;
+* `docs/diagrams/*.dot` — схемы (graphviz), `docs/style.css` — оформление;
+* `docs/instructions-ru.pdf`, `docs/instructions-en.pdf` — готовые PDF
+  (A4, номера страниц, каждая глава с новой страницы).
+
+Пересобрать всё (нужны `pandoc`, `graphviz` и `calibre`; на Debian/Ubuntu —
+`sudo apt install pandoc graphviz calibre`):
+
+```bash
+docs/build.sh          # схемы, HTML и PDF для обоих языков
+docs/build.sh ru       # только русская версия
+```
+
+Подробности и правила правки схем — в `docs/README.md`.
+
 ## Все параметры запуска
 
 | Параметр | Назначение |
@@ -432,6 +454,8 @@ python3 -m venv .venv
 * `apitor_remote.py` — сам пульт (один файл, зависимость только `apitor-ble`).
 * `requirements.txt` — зависимости для установки.
 * `examples/` — примеры программ («квадрат» на русском и английском).
+* `docs/` — печатная инструкция для детей (RU+EN, markdown → PDF,
+  собирается `docs/build.sh`; там же схемы `.dot` и готовые PDF).
 * `.venv/` — виртуальное окружение Python (создаётся при установке, в git не хранится).
 
 Пульт хранит в `~/.config/apitor-control/`: `addresses.json` (кэш адресов),

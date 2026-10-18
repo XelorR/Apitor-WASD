@@ -10,3 +10,6 @@ addresses.json
 # Автосохранение и временные файлы редактора в папке программ
 programs/_draft.txt
 programs/_edit_*.txt
+
+# Собранный HTML инструкций (генерируется docs/build.sh из markdown)
+docs/*.html

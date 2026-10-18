@@ -8,6 +8,7 @@ Single-file Python CLI remote for Apitor robots (R, J, S, Q, X, Wheels) over Blu
 - Run: `.venv/bin/python apitor_remote.py` — requires a real terminal (exits 2 if stdin is not a TTY)
 - Without a robot: `.venv/bin/python apitor_remote.py --simulate` — prints BLE command frames to stdout instead of connecting (use this to verify changes)
 - Run a program file: `.venv/bin/python apitor_remote.py --program examples/квадрат.txt` (`examples/square.txt` is the English version)
+- Build the printable kids' manual: `docs/build.sh` (needs `pandoc`, `graphviz`, `calibre`; markdown + `docs/diagrams/*.dot` → `docs/img/*.svg` + `docs/instructions-{ru,en}.pdf`)
 - Exit codes: `0` clean quit, `2` error (bad profile, unreadable program file, no TTY), `130` Ctrl+C
 
 ## Gotchas
@@ -19,3 +20,4 @@ Single-file Python CLI remote for Apitor robots (R, J, S, Q, X, Wheels) over Blu
 - `Ctrl+C` stops all motors and disconnects before exiting.
 - `--tui` draws a full-screen dashboard (status bar, log, program row, hints) on the alternate screen with raw ANSI codes — no external deps. All output goes through `Remote._emit`/`_say` (tag-aware: `Tui.note(tag, text)`), prompts render in the bottom bar from `self.prompt` (`title`/`text` keys), the external `$EDITOR` pauses (leaves the alt screen) and resumes the TUI, and `SIGWINCH` triggers a redraw. Non-TUI output must stay byte-identical to the old plain prints.
 - Program files are plain text: RU and EN words both accepted (`вперёд` = `forward`/`up`, `назад` = `back`/`down`, `right` also as `rght`), single-symbol shorthand shown in the editor row is also parsed (`↑` `↓` `←` `→` `‖` `✦` `●3`, e.g. `↑5 →2`), `#` comments, `e`/`ё` and case forgiven, `×`/`*`/`,` as separators.
+- `docs/` is the printable RU/EN kids' manual: `instructions-*.md` + `diagrams/*.dot` + `style.css`, built by `docs/build.sh` (pandoc → HTML → calibre `ebook-convert` PDF with `--paper-size a4`, `--page-breaks-before="//*[name()='h1']"` — one page per chapter — and footer numbers via `--pdf-footer-template`). Generated `img/*.svg` and the PDFs are committed; `docs/*.html` is gitignored. No emoji in the text (no font coverage in PDF): use the program symbols `↑ ↓ ← → ‖ ✦ ●` and `★` instead.
