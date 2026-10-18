@@ -32,8 +32,9 @@ E — правка во внешнем редакторе ($EDITOR/$VISUAL, ин
 
 Режим по умолчанию — "удержание": движок крутится, пока клавиша повторяется
 (автоповтор операционной системы), и робот сам останавливается через
---hold-timeout секунд после отпускания. Клавиша `l` включает "фиксацию":
-робот едет, пока не нажмёте стоп/другое.
+--hold-timeout секунд после отпускания; короткое нажатие = толчок.
+Клавиши `k`/`l` выбирают режим движения (это не тумблер): `k` — удержание,
+`l` — "фиксация": робот едет, пока не нажмёте стоп/другое.
 
 С флагом --key-state удержание работает "как в играх": пульт читает реальное
 состояние клавиш (Linux: evdev, Windows: WinAPI) и останавливает робота
@@ -204,7 +205,8 @@ KEYMAP: dict[str, str] = {
     "g": "load_prog", "G": "load_prog",
     "j": "journal", "J": "journal",
     "x": "clear_prog", "X": "clear_prog",
-    "t": "test", "i": "identify", "l": "latch", "h": "help", "?": "help",
+    "t": "test", "i": "identify", "h": "help", "?": "help",
+    "k": "hold", "K": "hold", "l": "latch", "L": "latch",
     "\x03": "quit",  # Ctrl+C (терминал в "сыром" режиме)
 }
 KEYMAP.update({key: f"color:{key}" for key in COLOR_BY_KEY})
@@ -212,11 +214,11 @@ KEYMAP.update({key: f"color:{key}" for key in COLOR_BY_KEY})
 # Русская раскладка: те же физические клавиши приходят кириллицей.
 _LAYOUT = {
     "й": "q", "ц": "w", "у": "e", "ф": "a", "ы": "s", "в": "d", "е": "t",
-    "р": "h", "д": "l", "о": "j", "ш": "i", "к": "r", "а": "f", "п": "g",
+    "р": "h", "д": "l", "л": "k", "о": "j", "ш": "i", "к": "r", "а": "f", "п": "g",
     "с": "c", "и": "b", "ч": "x", "з": "p",
     "х": "[", "ъ": "]",
     "Й": "Q", "Ц": "W", "У": "E", "Ф": "A", "Ы": "S", "В": "D", "Е": "T",
-    "Р": "H", "Д": "L", "О": "J", "Ш": "I", "К": "R", "А": "F", "П": "G",
+    "Р": "H", "Д": "L", "Л": "K", "О": "J", "Ш": "I", "К": "R", "А": "F", "П": "G",
     "С": "C", "И": "B", "Ч": "X", "З": "P",
     "Х": "[", "Ъ": "]",
 }
@@ -1237,8 +1239,9 @@ class Remote:
         if self._is_connected() and self.move != "stop":
             self._schedule_send()  # применить новую скорость на ходу
 
-    def _on_latch(self) -> None:
-        self.latched = not self.latched
+    def _on_latch(self, latched: bool) -> None:
+        """k/l: выбрать режим движения — удержание (k) или фиксацию (l)."""
+        self.latched = latched
         if self.latched:
             self._say("mode", tr("фиксация: робот едет, пока не нажмёте пробел/другое",
                                  "latched: the robot drives until you press space/other"))
@@ -1376,7 +1379,7 @@ class Remote:
                 "  J             toggle the run journal",
                 "  t             test drive: forward, back, left, right",
                 "  i             spin motors 1, 2, 3 one by one (calibration)",
-                "  l             mode: hold (auto-stop) <-> latched",
+                "  k / l         mode: hold (auto-stop) / latched",
                 "  h, ?          this help              Ctrl+C — quit",
                 "",
                 "calibration (if the robot drives the wrong way), at launch:",
@@ -1405,7 +1408,7 @@ class Remote:
                 "  J             журнал прогонов вкл/выкл",
                 "  t             тест-поездка: вперёд, назад, влево, вправо",
                 "  i             крутить моторы 1, 2, 3 по очереди (калибровка)",
-                "  l             режим: удержание (авто-стоп) <-> фиксация",
+                "  k / l         режим: удержание (авто-стоп) / фиксация",
                 "  h, ?          эта справка            Ctrl+C — выход",
                 "",
                 "калибровка (если робот едет не туда), указывается при запуске:",
@@ -1513,7 +1516,7 @@ class Remote:
         if self.mode == "run" and action not in ("connect", "disconnect", "journal", "help"):
             return True
         # В редакторе калибровка и мотор 3 не работают (чтобы не дёрнуть робота).
-        if self.mode == "editor" and action in ("test", "identify", "m3_fwd", "m3_rev", "latch"):
+        if self.mode == "editor" and action in ("test", "identify", "m3_fwd", "m3_rev", "hold", "latch"):
             return True
         if action == "connect":
             await self._on_connect_key()
@@ -1537,8 +1540,10 @@ class Remote:
             await self._on_m3(Direction.D1, "вперёд", "forward")
         elif action == "m3_rev":
             await self._on_m3(Direction.D2, "назад", "back")
+        elif action == "hold":
+            self._on_latch(False)
         elif action == "latch":
-            self._on_latch()
+            self._on_latch(True)
         elif action == "prog":
             await self._on_prog_key()
         elif action == "run_last":
