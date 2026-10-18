@@ -36,16 +36,18 @@ E — правка во внешнем редакторе ($EDITOR/$VISUAL, ин
 Клавиши `k`/`l` выбирают режим движения (это не тумблер): `k` — удержание,
 `l` — "фиксация": робот едет, пока не нажмёте стоп/другое.
 
-С флагом --key-state удержание работает "как в играх": пульт читает реальное
-состояние клавиш (Linux: evdev, Windows: WinAPI) и останавливает робота
-в момент отпускания; автоповтор и таймаут не нужны.
+Удержание работает "как в играх": пульт сам читает реальное состояние клавиш
+(Linux: evdev, Windows: WinAPI) и останавливает робота в момент отпускания,
+автоповтор и таймаут не нужны. Если состояние клавиш недоступно (нет прав на
+/dev/input и т. п.), пульт предупреждает и переходит на авто-стоп по
+--hold-timeout.
 
 Примеры:
 
     .venv/bin/python apitor_remote.py                # Robot R, скорость 6
     .venv/bin/python apitor_remote.py --speed 9      # быстрее
     .venv/bin/python apitor_remote.py --simulate     # без Bluetooth: печать кадров
-    .venv/bin/python apitor_remote.py --key-state    # стоп в момент отпускания клавиши
+    .venv/bin/python apitor_remote.py --key-state-device /dev/input/event7  # одна клавиатура
     .venv/bin/python apitor_remote.py --address AA:BB:CC:DD:EE:FF
     .venv/bin/python apitor_remote.py --program programs/квадрат.txt
     .venv/bin/python apitor_remote.py --lang en       # английский интерфейс (запомнится)
@@ -796,7 +798,6 @@ class Remote:
         self.scan_timeout = max(2.0, args.scan_timeout)
         self.cli_address = (args.address or "").strip() or None
         self.verbose = bool(args.verbose)
-        self.want_key_state = bool(getattr(args, "key_state", False))
 
         # Настройки программы: флаг > config.json > значение по умолчанию.
         def number(flag_name: str, key: str, default: float, minimum: float) -> float:
@@ -833,7 +834,7 @@ class Remote:
         self.m3_dir: Direction | None = None
         self.last_input = 0.0
         self.low_power_warned = False
-        self.key_state = False            # --key-state: слежение за клавишами работает
+        self.key_state = False            # слежение за реальными клавишами включилось
         self.key_state_devices = [        # --key-state-device: слушать только эти пути
             str(p) for p in (getattr(args, "key_state_device", None) or [])
         ]
@@ -1286,33 +1287,30 @@ class Remote:
         except asyncio.CancelledError:
             pass
 
-    # -- key-state: реальное состояние клавиш (--key-state) ------------------ #
+    # -- key-state: реальное состояние клавиш -------------------------------- #
     async def _enable_key_state(self) -> None:
+        """Включить слежение за реальными клавишами (пробуем всегда при старте).
+
+        Если не вышло (нет доступа к /dev/input, другая ОС) — предупреждаем
+        и работаем как раньше: удержание с авто-стопом по --hold-timeout.
+        """
         backend, error = make_key_state_backend(
             self._on_key_state, self._key_state_lost, self.key_state_devices or None
         )
         if backend is None:
-            self._say("warn", tr(f"--key-state недоступен: {error}; работает обычное удержание",
-                                 f"--key-state unavailable: {error}; using the usual hold mode"))
+            self._say("warn", tr(f"key-state недоступен: {error}; работает обычное удержание",
+                                 f"key-state unavailable: {error}; using the usual hold mode"))
             return
         error = await backend.start()
         if error is not None:
-            self._say("warn", tr(f"--key-state не включился: {error}; работает обычное удержание",
-                                 f"--key-state did not start: {error}; using the usual hold mode"))
+            self._say("warn", tr(f"key-state не включился: {error}; работает обычное удержание",
+                                 f"key-state did not start: {error}; using the usual hold mode"))
             return
         self._keys_backend = backend
         self.key_state = True
-        self._say("info", tr(
-            f"key-state ({backend.name}): стоп в момент отпускания клавиши",
-            f"key-state ({backend.name}): stop the moment the key is released",
-        ))
-        self._say("hint", tr(
-            "клавиши ловятся глобально — не печатайте WASD в других окнах",
-            "keys are captured globally — don't type WASD in other windows",
-        ))
 
     async def _on_key_state(self, action: str, pressed: bool) -> None:
-        """Нажал/отпустил с реальной клавиатуры (режим --key-state)."""
+        """Нажал/отпустил с реальной клавиатуры (key-state)."""
         active = self.mode == "remote" and self.prompt is None
         if pressed:
             if action in self._held_moves:
@@ -1355,7 +1353,7 @@ class Remote:
             else (
                 tr("удержание (стоп в момент отпускания, key-state)",
                    "hold (stop the moment the key is released, key-state)")
-                if self.want_key_state
+                if self.key_state
                 else tr(f"удержание (авто-стоп через {self.hold_timeout:g} с)",
                         f"hold (auto-stop {self.hold_timeout:g} s after release)")
             )
@@ -1404,8 +1402,10 @@ class Remote:
                 "  --flip-left / --flip-right      flip the corresponding wheel",
                 "  --left-motor 2 --right-motor 1  swap the wheels",
                 "",
-                "launch with --key-state: stop the moment the key is released",
-                "(game style; Linux — /dev/input, Windows — WinAPI)",
+                "hold mode: keys are read directly (game style) — the robot",
+                "stops the moment the key is released; without access to",
+                "/dev/input (Linux) or WinAPI (Windows) — auto-stop by --hold-timeout",
+                "  --key-state-device /dev/input/event7  watch one keyboard only",
             )
         else:
             lines = (
@@ -1433,8 +1433,10 @@ class Remote:
                 "  --flip-left / --flip-right      развернуть соответствующее колесо",
                 "  --left-motor 2 --right-motor 1  поменять колёса местами",
                 "",
-                "запуск с флагом --key-state: стоп в момент отпускания клавиши",
-                "(как в играх; Linux — /dev/input, Windows — WinAPI)",
+                "удержание: клавиши читаются напрямую (как в играх) — робот",
+                "встаёт в момент отпускания; без доступа к /dev/input (Linux) или",
+                "WinAPI (Windows) — авто-стоп по --hold-timeout",
+                "  --key-state-device /dev/input/event7  слушать одну клавиатуру",
             )
         for line in lines:
             print(line, flush=True)
@@ -2270,7 +2272,15 @@ class Remote:
             )
             return 2
         self._loop = asyncio.get_running_loop()
+        await self._enable_key_state()
         self._print_banner()
+        if self.key_state:
+            self._say("hint", tr(
+                f"key-state ({self._keys_backend.name}): клавиши ловятся глобально — "
+                "не печатайте WASD в других окнах",
+                f"key-state ({self._keys_backend.name}): keys are captured globally — "
+                "don't type WASD in other windows",
+            ))
         if not self.editor.is_empty() and self.program_name is not None:
             n = len(self.editor.steps)
             self._say("load", tr(
@@ -2281,11 +2291,6 @@ class Remote:
         if self.journal:
             self._say("log", tr(f"журнал включён: {self.journal_path}",
                                 f"journal is on: {self.journal_path}"))
-        if self.want_key_state:
-            await self._enable_key_state()
-        elif self.key_state_devices:
-            self._say("warn", tr("--key-state-device работает только вместе с --key-state",
-                                 "--key-state-device only works together with --key-state"))
         if not IS_WINDOWS:
             with contextlib.suppress(Exception):
                 self._termios_original = termios.tcgetattr(sys.stdin.fileno())
@@ -2333,13 +2338,13 @@ class Remote:
 
 
 # --------------------------------------------------------------------------- #
-# Состояние клавиш (--key-state)
+# Состояние клавиш (key-state)
 # --------------------------------------------------------------------------- #
 # Настоящие "нажал/отпустил" в обход автоповтора, как в играх: движение
 # начинается в момент нажатия и прекращается в момент отпускания. Платформа
 # определяется автоматически: Linux — evdev (/dev/input/event*), Windows —
-# WinAPI (GetAsyncKeyState). Без флага работает обычный режим (автоповтор
-# и авто-стоп по --hold-timeout).
+# WinAPI (GetAsyncKeyState). Включается при старте; если не получилось —
+# предупреждение и обычный режим (автоповтор и авто-стоп по --hold-timeout).
 
 _EVDEV_KEY_ACTION = {  # коды клавиш Linux -> действие (физические WASD, стрелки)
     17: "fwd", 103: "fwd",      # W, ↑
@@ -2566,6 +2571,8 @@ def build_parser() -> argparse.ArgumentParser:
         description=tr("Пульт с горячими клавишами для Apitor Robot R (и других Apitor).",
                        "Hotkey remote for the Apitor Robot R (and other Apitors)."),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        # без сокращений: «--key-state» не должен притворяться «--key-state-device»
+        allow_abbrev=False,
     )
     parser.add_argument("--product", default="r", help=tr("модель: r, j, s, q, x, w (Wheels)",
                                                           "model: r, j, s, q, x, w (Wheels)"))
@@ -2584,14 +2591,6 @@ def build_parser() -> argparse.ArgumentParser:
                         help=tr("стартовать в режиме фиксации", "start in latched mode"))
     parser.add_argument("--simulate", action="store_true",
                         help=tr("без Bluetooth: печатать кадры", "no Bluetooth: print frames"))
-    parser.add_argument(
-        "--key-state",
-        action="store_true",
-        help=tr("стоп в момент отпускания клавиши, как в играх (Linux: evdev, "
-                "Windows: WinAPI); без флага — авто-стоп по --hold-timeout",
-                "stop the moment the key is released, game style (Linux: evdev, "
-                "Windows: WinAPI); without the flag — auto-stop by --hold-timeout"),
-    )
     parser.add_argument(
         "--key-state-device",
         action="append",
