@@ -13,7 +13,8 @@
     Enter ........ выполнить программу (записанный макрос или файл)
     Shift+Enter .. то же, но без пауз (Shift виден только с key-state)
     p ............ режим программы (шаги, как у Big Trak / Лунохода)
-    m ............ записать макрос: делайте что угодно, Esc — стоп
+    m ............ записать макрос: делайте что угодно, стоп — Esc или n
+    n ............ закончить запись макроса (то же, что Esc)
     r / R ........ проехать маршрут обратно задним ходом (R — без пауз)
     t / T ........ робота развернули рукой: проехать обратно передом
     F / G ........ сохранить / загрузить программу файлом
@@ -32,10 +33,11 @@ e или E — правка во внешнем редакторе ($EDITOR/$VIS
 Файлы простые: «вперёд 5», «вправо 2», понимаются и по-русски, и по-английски.
 
 Макрос: нажмите `m` в пульте — пульт запомнит всё, что вы делаете (движение,
-свет, мигание, смену скорости), а паузы запишет ожиданием. Esc (или `m`
-ещё раз) — остановить запись: макрос становится программой, его можно сразу
-выполнить (Enter), сохранить файлом (f/g) и править (p, Backspace, e/E). Это
-тот же формат программы, только у действий есть точная длительность: «вперёд
+свет, мигание, смену скорости), а паузы запишет ожиданием. Запись
+останавливают `Esc` или `n` (m только начинает): макрос становится
+программой, его можно сразу выполнить (Enter), сохранить файлом (f/g)
+и править (p, Backspace, e/E). Это тот же формат программы, только
+у действий есть точная длительность: «вперёд
 1.2с» (или «вперёд 1.2s» — пульт понимает с, s, сек, sec, секунды, seconds в
 любом интерфейсе), «пауза 0.4с», а «скорость 8» в середине файла меняет
 скорость по ходу. В редакторе такие шаги видны как ↑1.2с, ‖0.4с и »8; шаги и
@@ -251,7 +253,7 @@ KEYMAP: dict[str, str] = {
     "b": "blink_led", "B": "blink_led",  # мигнуть подсветкой (в редакторе b — шаг)
     "e": "m3_fwd", "E": "m3_rev",
     "p": "prog", "P": "prog",
-    "m": "record_macro", "M": "record_macro",
+    "m": "record_macro", "M": "record_macro",  # m — начать; стоп — Esc или n
     # обратный проезд: строчная — с паузами, заглавная (с Shift) — без пауз
     "r": "rev_back", "R": "rev_back_np",
     "t": "rev_front", "T": "rev_front_np",
@@ -270,11 +272,11 @@ KEYMAP.update({key: f"color:{key}" for key in COLOR_BY_KEY})
 _LAYOUT = {
     "й": "q", "ц": "w", "у": "e", "ф": "a", "ы": "s", "в": "d", "е": "t",
     "р": "h", "д": "l", "л": "k", "о": "j", "ш": "i", "к": "r", "а": "f", "п": "g",
-    "с": "c", "и": "b", "ч": "x", "з": "p", "ь": "m", "н": "y",
+    "с": "c", "и": "b", "ч": "x", "з": "p", "ь": "m", "н": "y", "т": "n",
     "х": "[", "ъ": "]",
     "Й": "Q", "Ц": "W", "У": "E", "Ф": "A", "Ы": "S", "В": "D", "Е": "T",
     "Р": "H", "Д": "L", "Л": "K", "О": "J", "Ш": "I", "К": "R", "А": "F", "П": "G",
-    "С": "C", "И": "B", "Ч": "X", "З": "P", "Ь": "M", "Н": "Y",
+    "С": "C", "И": "B", "Ч": "X", "З": "P", "Ь": "M", "Н": "Y", "Т": "N",
     "Х": "[", "Ъ": "]",
 }
 
@@ -1313,8 +1315,8 @@ class Tui:
         if remote.recording:
             steps = remote.macro.steps
             if not steps:
-                return tr("[rec] … делайте что-нибудь (Esc — стоп)",
-                          "[rec] … do something (Esc — stop)")
+                return tr("[rec] … делайте что-нибудь (Esc или n — стоп)",
+                          "[rec] … do something (Esc or n — stop)")
             text = " · ".join(step_text(step) for step in steps[-8:])
             return f"[rec] {text} ({len(steps)} {steps_word(len(steps))})"
         if not remote.editor.steps:
@@ -2069,10 +2071,11 @@ class Remote:
             self._loop.create_task(self._stop(tr("key-state отключился", "key-state stopped")))
 
     # -- запись макроса ------------------------------------------------------ #
-    async def _toggle_recording(self) -> None:
-        """M: начать запись макроса или закончить её."""
+    async def _start_recording(self) -> None:
+        """M: начать запись макроса. Запись останавливают Esc или n."""
         if self.recording:
-            self._stop_recording()
+            self._say("rec", tr("запись уже идёт — стоп: Esc или n",
+                                "already recording — stop with Esc or n"))
             return
         if self.mode != "remote":
             self._say("warn", tr("запись макроса — только в пульте (Esc — назад)",
@@ -2087,13 +2090,13 @@ class Remote:
         self._rec_shown = 0
         self._say("rec", tr(
             "запись макроса: езда, свет, скорость — всё запишется, паузы станут "
-            "ожиданием; Esc или m — стоп",
+            "ожиданием; Esc или n — стоп",
             "recording a macro: driving, light, speed are all recorded, pauses "
-            "become waits; Esc or m — stop",
+            "become waits; Esc or n — stop",
         ))
 
     def _stop_recording(self) -> None:
-        """Закончить запись: макрос становится «последней программой» (R)."""
+        """Закончить запись: макрос становится «последней программой» (Enter)."""
         if not self.recording:
             return
         steps = self.macro.stop(time.monotonic())
@@ -2132,8 +2135,8 @@ class Remote:
         """Короткая строка подсказок для текущего режима (баннер и TUI)."""
         if self.recording:
             return tr(
-                "запись макроса: ездите и светите как обычно · Esc или m — стоп",
-                "recording a macro: drive and light as usual · Esc or m — stop",
+                "запись макроса: ездите и светите как обычно · Esc или n — стоп",
+                "recording a macro: drive and light as usual · Esc or n — stop",
             )
         if self.mode == "editor":
             return self._prog_hint()
@@ -2204,7 +2207,7 @@ class Remote:
                 "  b / B         blink the light (its color is kept)",
                 "  e / Shift+E   motor 3 (accessory): forward / back — toggle",
                 "  p             program mode: enter steps, run, files",
-                "  m             record a macro: press m, do anything, Esc — stop",
+                "  m / n         record a macro / stop it (m starts, Esc or n — stop)",
                 "                (actions are timed, pauses become waits)",
                 "  x             clear the program (stay in the current mode)",
                 "  r / R         drive the route back: r — driving backwards,",
@@ -2245,7 +2248,8 @@ class Remote:
                 "  b / B         мигнуть подсветкой (цвет не меняется)",
                 "  e / Shift+E   мотор 3 (аксессуар, если есть): вперёд / назад — тумблер",
                 "  p             режим программы: набор шагов, запуск, файлы",
-                "  m             записать макрос: нажмите m, делайте что угодно, Esc — стоп",
+                "  m / n         записать макрос / закончить запись (m начинает, "
+                "Esc или n — стоп)",
                 "                (действия записываются с секундами, паузы — как ожидание)",
                 "  x             очистить программу (режим не меняется)",
                 "  r / R         проехать маршрут обратно: r — задним ходом,",
@@ -2377,13 +2381,13 @@ class Remote:
                                                 "hold", "latch", "blink_led"):
             return True
         # Во время записи макроса программа, файлы и калибровка не трогаются:
-        # сначала надо остановить запись (Esc или m).
+        # сначала надо остановить запись (Esc или n).
         if self.recording and action in ("prog", "run", "save_prog", "load_prog",
                                          "clear_prog", "test", "identify",
                                          "rev_back", "rev_back_np",
                                          "rev_front", "rev_front_np"):
-            self._say("rec", tr("идёт запись макроса — сначала Esc (стоп)",
-                                "a macro is being recorded — press Esc first"))
+            self._say("rec", tr("идёт запись макроса — сначала Esc или n (стоп)",
+                                "a macro is being recorded — press Esc or n first"))
             return True
         if action == "connect":
             await self._on_connect_key()
@@ -2416,7 +2420,7 @@ class Remote:
         elif action == "prog":
             await self._on_prog_key()
         elif action == "record_macro":
-            await self._toggle_recording()
+            await self._start_recording()
         elif action == "run":
             await self._on_run_key()
         elif action.startswith("rev_"):
@@ -2630,9 +2634,9 @@ class Remote:
         key = _to_latin_layout(item) if len(item) == 1 else item
         if key == "\x03":
             return False  # Ctrl+C
-        if self.recording and key == "esc":
+        if self.recording and key in ("esc", "n", "N"):
             await self._stop_if_moving(tr("запись макроса", "macro recording"))
-            self._stop_recording()  # Esc (или m) — стоп, и макрос готов
+            self._stop_recording()  # Esc или n — стоп, и макрос готов
             return True
         if key == "enter" and self._shift_held():
             await self._on_run_key(drop_pauses=True)  # Shift+Enter — без пауз
@@ -2939,8 +2943,8 @@ class Remote:
         if self._run_task is not None and not self._run_task.done():
             return
         if self.recording:
-            self._say("rec", tr("идёт запись макроса — сначала Esc (стоп)",
-                                "a macro is being recorded — press Esc first"))
+            self._say("rec", tr("идёт запись макроса — сначала Esc или n (стоп)",
+                                "a macro is being recorded — press Esc or n first"))
             return
         if self.editor.is_empty():
             if from_editor:

@@ -373,11 +373,12 @@ the remote record your trip. Such a recording is called a **macro**.
 2. Drive the robot as usual: `w` `a` `s` `d`, the light, the turns, the
    pauses. The remote records everything, and every ride becomes a step
    with seconds.
-3. Press `Esc` (or `m` once more) — the recording is ready and already
-   sits in the program line.
+3. Press `Esc` (or `n`) — the recording is ready and already sits in the
+   program line. `m` only starts the recording: pressing it again just
+   reminds you that the recording is on.
 
 ```
-[rec] recording a macro: driving, light, speed are all recorded, pauses become waits; Esc or m — stop
+[rec] recording a macro: driving, light, speed are all recorded, pauses become waits; Esc or n — stop
 [rec] ↑
 [rec] ←
 [rec] macro recorded: 3 steps · 2.88 s — Enter — drive, r/t — back, f — save, p — edit
@@ -389,8 +390,8 @@ pauses, light and speed. A macro is an ordinary program: you can edit it
 
 <div class="warn">
 While the recording is on, `p`, `Enter`, `r`, `t`, `x`, `f`, `g` do not
-work: finish the recording first — `Esc`. And `space` is just a robot
-stop: the recording continues.
+work: finish the recording first — `Esc` or `n`. And `space` is just a
+robot stop: the recording continues.
 </div>
 
 ## The way back: `r` and `t`
@@ -544,7 +545,7 @@ It needs `pandoc`, `graphviz` and `calibre` (see `docs/README.md`).
 | `Shift+Enter` | the same, but without pauses |
 | `r` `t` | drive the route back: backwards / turned around |
 | `R` `T` | the same, but without pauses |
-| `m` | record a macro (`Esc` or another `m` stops it) |
+| `m` | record a macro (stop it with `Esc` or `n`) |
 | `f` `g` | save / load a program file |
 | `e` `E` | program editor |
 | `y` `i` | test drive / motors one by one |
