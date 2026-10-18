@@ -48,7 +48,7 @@ When everything is ready, you see something like this:
 
 The remote is not connected to the robot yet — that happens when you
 press `q` (section 3). If there is no welcome line at all, ask a grown-up:
-section 13.
+section 14.
 
 What the remote cannot do: it does not drive the robot from far away
 (stay within a few metres), it does not replace the official app, and it
@@ -64,8 +64,8 @@ cannot carry the robot up the stairs.
   stays silent, the battery probably needs charging.
 * **LED light** — a small lamp you can control from the keyboard
   (section 5).
-* **Motor 3** — for extra mechanisms, if your model has them. Key `e`
-  turns it forward, `Shift+E` turns it backward (it is a switch: press
+* **Motor 3** — for extra mechanisms, if your model has them. Key `v`
+  turns it forward, `V` turns it backward (it is a switch: press
   once to start, press again to stop).
 
 The robot drives “relative to itself”: `w` goes wherever its nose points.
@@ -125,7 +125,7 @@ There are two ways to drive, switched with `k` and `l`:
 
 <div class="tip">
 The `Shift` boost works only when the remote can watch real key presses
-(on Linux that needs a permission, see section 13). If boost does not
+(on Linux that needs a permission, see section 14). If boost does not
 come on, just drive at the usual speed. And remember: `Shift+Q`
 disconnects the robot — that is not the boost.
 </div>
@@ -335,7 +335,7 @@ You can save a program into a file and load it next time.
 |---|---|
 | `f` | save: the remote asks for a name, `Enter` accepts it |
 | `g` | load: a list of files, type a number and `Enter` |
-| `e` (`E`) | edit the program in a full-size editor |
+| `e` (`E`) | edit the program in a full-size editor (works from the remote too) |
 | `x` | clear the program |
 
 Program files live in the `programs/` folder next to the remote. You can
@@ -418,9 +418,10 @@ switches at another moment, when you reach that stretch (in the picture
 
 <div class="tip">
 `Shift+Enter` drives the program without pauses, and `R` or `T` (`Shift`
-with `r` or `t`) does the same on the way back. The `Shift` variants
-work only when the keyboard tracking is on (a grown-up knows what that
-is: section 14).
+with `r` or `t`) does the same on the way back. Capitals come by
+themselves, and `Shift+Enter` is learned from the terminal itself
+(kitty, foot, alacritty and others) — or from the keyboard tracking,
+when it is on (a grown-up knows what that is: section 14).
 </div>
 
 The way back does not spoil the program: it is built on the fly, so
@@ -434,7 +435,7 @@ looks the other way.
 | What happened | What to do |
 |---|---|
 | `[err] could not connect` | is the robot on? not busy with a phone? press `q` again |
-| The robot drives backward instead of forward | it is a setting: section 13, “calibration” |
+| The robot drives backward instead of forward | it is a setting: section 14, “calibration” |
 | The robot is too slow or too fast | `]` and `[` change the speed (1…12) |
 | The keys do nothing | the remote listens to the keyboard only while its window is active; press `h` for a hint. Do not type `w a s d` in other windows |
 | `Enter` does not start the program | look at the `[prog]` line: `0 steps` means the program is empty |
@@ -444,7 +445,12 @@ looks the other way.
 
 # 14. For grown-ups: install, flags, tuning
 
-**Install** (once):
+**The easiest way:** double-click `run.sh` (Linux) or `run.bat`
+(Windows). The file creates `.venv`, installs the dependency, opens a
+terminal and starts the remote. Flags are passed through as they are:
+`run.sh --tui` or `run.bat --program examples/square.txt`.
+
+**Install by hand** (once):
 
 ```bash
 cd Apitor-WASD
@@ -455,6 +461,7 @@ python3 -m venv .venv
 **Run:**
 
 ```bash
+./run.sh                                         # all of that in one command
 .venv/bin/python apitor_remote.py                # the usual remote
 .venv/bin/python apitor_remote.py --tui          # full-screen interface:
                                                  # the banner on top shows the mode keys
@@ -467,10 +474,14 @@ warns and falls back to auto-stop):
 `sudo usermod -aG input "$USER"`, then log out and in again. On Windows
 Python 3.10+ and Bluetooth are enough.
 
-The `Shift` variants (`Shift+Enter`, `R`, `T` and the boost) work only
-when the keyboard tracking is on. If you do not need it at all (the
-auto-stop by `--hold-timeout` is enough), run with `--no-key-state`: the
-remote will not read the keyboard in `/dev/input` and will not warn.
+The boost (hold `Shift` — speed 12) works only when the keyboard tracking
+is on. `Shift+Enter` and capitals `R`, `T` need no tracking: on start the
+remote asks the terminal whether it can tell `Shift` apart (the kitty
+keyboard protocol: kitty, foot, alacritty, wezterm, ghostty, a recent
+GNOME Terminal) and turns the extended keys on if it can. If you do not
+need the tracking at all (the auto-stop by `--hold-timeout` is enough),
+run with `--no-key-state`: the remote will not read the keyboard in
+`/dev/input` and will not warn.
 
 Useful flags (the full list is in the README):
 
@@ -538,7 +549,7 @@ It needs `pandoc`, `graphviz` and `calibre` (see `docs/README.md`).
 | `Shift` | boost (while held) |
 | `1`…`8`, `0` | light colour, `0` turns it off |
 | `b` `B` | blink |
-| `e` `Shift+E` | motor 3: forward / backward (a switch) |
+| `v` `V` | motor 3: forward / backward (a switch) |
 | `k` `l` | hold / latched |
 | `p` `P` | program mode |
 | `Enter` | drive the program: the last macro or a file |
@@ -547,7 +558,7 @@ It needs `pandoc`, `graphviz` and `calibre` (see `docs/README.md`).
 | `R` `T` | the same, but without pauses |
 | `m` | record a macro (stop it with `Esc` or `n`) |
 | `f` `g` | save / load a program file |
-| `e` `E` | program editor |
+| `e` `E` | program editor (works from the remote too) |
 | `y` `i` | test drive / motors one by one |
 | `j` | run journal |
 | `h` `?` | help |
