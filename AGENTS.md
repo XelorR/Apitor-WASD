@@ -13,7 +13,7 @@ Single-file Python CLI remote for Apitor robots (R, J, S, Q, X, Wheels) over Blu
 ## Gotchas
 
 - `--key-state` on Linux reads `/dev/input/event*` — you need the `input` group (`sudo usermod -aG input "$USER"`, then re-log) or root. `sudo` works but is not recommended: it creates root-owned state files in `~/.config/apitor-control/`.
-- State lives in `~/.config/apitor-control/`: `addresses.json` (one cached Bluetooth address per model), `config.json` (lang, timings, journal), `programs/` (program files + `_draft.txt` autosave), `runs.log`. Flag priority: CLI flag → `config.json` → default.
+- State lives in `~/.config/apitor-control/`: `addresses.json` (one cached Bluetooth address per model), `config.json` (lang, timings, journal), `runs.log`. Program files and the `_draft.txt` autosave live in `programs/` next to the script (overridable with `--program-dir` or `program_dir` in config). Flag priority: CLI flag → `config.json` → default.
 - With a cached address, `q` connects directly without scanning; `--no-cache` disables this. If the cached robot is off, the app falls back to scanning and updates the cache.
 - Robot drive directions are unverified on hardware for Robot R — after connecting, press `t` (test drive) and use `--flip-left/--flip-right` or `--left-motor/--right-motor` if directions are wrong.
 - `Ctrl+C` stops all motors and disconnects before exiting.

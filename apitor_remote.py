@@ -47,7 +47,7 @@ E — правка во внешнем редакторе ($EDITOR/$VISUAL, ин
     .venv/bin/python apitor_remote.py --simulate     # без Bluetooth: печать кадров
     .venv/bin/python apitor_remote.py --key-state    # стоп в момент отпускания клавиши
     .venv/bin/python apitor_remote.py --address AA:BB:CC:DD:EE:FF
-    .venv/bin/python apitor_remote.py --program ~/.config/apitor-control/programs/квадрат.txt
+    .venv/bin/python apitor_remote.py --program programs/квадрат.txt
     .venv/bin/python apitor_remote.py --lang en       # английский интерфейс (запомнится)
 
 Если робот едет наоборот или разворачивается не туда, откалибруйте сборку
@@ -97,7 +97,8 @@ DEFAULT_HOLD_TIMEOUT = 0.8
 CACHE_PATH = Path.home() / ".config" / "apitor-control" / "addresses.json"
 CONFIG_PATH = Path.home() / ".config" / "apitor-control" / "config.json"
 JOURNAL_PATH = Path.home() / ".config" / "apitor-control" / "runs.log"
-DEFAULT_PROGRAM_DIR = Path.home() / ".config" / "apitor-control" / "programs"
+SCRIPT_DIR = Path(__file__).resolve().parent
+DEFAULT_PROGRAM_DIR = SCRIPT_DIR / "programs"
 DRAFT_FILE = "_draft.txt"
 
 # Длительности шагов программы по умолчанию (меняются в config.json).
