@@ -254,9 +254,11 @@ _STEP_WORDS = {
 # Прощающий парсер: команды на русском и английском (можно вперемешку).
 _STEP_SYNONYMS = {
     "вперёд": "fwd", "вперед": "fwd", "forward": "fwd", "forwards": "fwd", "ahead": "fwd",
+    "up": "fwd",
     "назад": "back", "back": "back", "backward": "back", "backwards": "back",
+    "down": "back",
     "влево": "left", "left": "left",
-    "вправо": "right", "right": "right",
+    "вправо": "right", "right": "right", "rght": "right",
     "пауза": "pause", "pause": "pause", "wait": "pause",
     "цвет": "color", "color": "color", "colour": "color",
     "мигнуть": "blink", "blink": "blink", "flash": "blink",

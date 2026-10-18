@@ -17,4 +17,4 @@ Single-file Python CLI remote for Apitor robots (R, J, S, Q, X, Wheels) over Blu
 - With a cached address, `q` connects directly without scanning; `--no-cache` disables this. If the cached robot is off, the app falls back to scanning and updates the cache.
 - Robot drive directions are unverified on hardware for Robot R — after connecting, press `t` (test drive) and use `--flip-left/--flip-right` or `--left-motor/--right-motor` if directions are wrong.
 - `Ctrl+C` stops all motors and disconnects before exiting.
-- Program files are plain text: RU and EN words both accepted (`вперёд` = `forward`), `#` comments, `e`/`ё` and case forgiven, `×`/`*`/`,` as separators.
+- Program files are plain text: RU and EN words both accepted (`вперёд` = `forward`/`up`, `назад` = `back`/`down`, `right` also as `rght`), `#` comments, `e`/`ё` and case forgiven, `×`/`*`/`,` as separators.
