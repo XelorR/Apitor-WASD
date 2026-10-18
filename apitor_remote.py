@@ -43,6 +43,10 @@ E — правка во внешнем редакторе ($EDITOR/$VISUAL, ин
 /dev/input и т. п.), пульт предупреждает и переходит на авто-стоп по
 --hold-timeout.
 
+Пока клавиши читаются напрямую, зажатый Shift — буст: на время удержания
+скорость становится 12, а после отпускания возвращается прежняя (Shift+Q
+при этом по-прежнему отключает робота).
+
 Примеры:
 
     .venv/bin/python apitor_remote.py                # Robot R, скорость 6
@@ -841,6 +845,8 @@ class Remote:
             str(p) for p in (getattr(args, "key_state_device", None) or [])
         ]
         self._held_moves: list[str] = []  # зажатые сейчас направления (key-state)
+        self._boost_speed: int | None = None  # Shift-буст: скорость до нажатия
+        self._boost_held = 0                  # сколько Shift-клавиш сейчас зажато
         self._keys_backend = None
 
         # Режимы: remote — пульт, editor — редактор программы, run — выполнение.
@@ -1327,6 +1333,9 @@ class Remote:
 
     async def _on_key_state(self, action: str, pressed: bool) -> None:
         """Нажал/отпустил с реальной клавиатуры (key-state)."""
+        if action == "boost":
+            self._on_boost(pressed)
+            return
         active = self.mode == "remote" and self.prompt is None
         if pressed:
             if action in self._held_moves:
@@ -1344,12 +1353,54 @@ class Remote:
         elif self.move != "stop":
             await self._stop(tr("клавиша отпущена", "key released"))
 
+    def _on_boost(self, pressed: bool) -> None:
+        """Shift: пока зажат — скорость 12 (только в пульте), отпустил — прежняя.
+
+        Shift-клавиш две; буст держится, пока зажата хотя бы одна.
+        """
+        if not pressed:
+            self._boost_held = max(0, self._boost_held - 1)
+            if self._boost_held == 0:
+                self._boost_release()
+            return
+        self._boost_held += 1
+        if self._boost_speed is not None:
+            return  # буст уже идёт — второй Shift ничего не меняет
+        if self.mode != "remote" or self.prompt is not None:
+            return  # буст — только в пульте
+        self._boost_speed = self.speed
+        if self.speed != SPEED_MAX:
+            self.speed = SPEED_MAX
+            self._say("speed", tr(
+                f"буст: скорость {SPEED_MAX} (отпустите Shift — вернётся {self._boost_speed})",
+                f"boost: speed {SPEED_MAX} (release Shift — back to {self._boost_speed})",
+            ))
+            self._apply_speed_if_moving()
+
+    def _boost_release(self) -> None:
+        """Отпустить буст: вернуть скорость, если её не меняли руками при зажатом Shift."""
+        if self._boost_speed is None:
+            return
+        was = self._boost_speed
+        self._boost_speed = None
+        if self.speed == SPEED_MAX and was != SPEED_MAX:
+            self.speed = was
+            self._say("speed", tr(f"скорость как была: {was}",
+                                  f"speed is back to {was}"))
+            self._apply_speed_if_moving()
+
+    def _apply_speed_if_moving(self) -> None:
+        if self._is_connected() and self.move != "stop":
+            self._schedule_send()  # применить новую скорость на ходу
+
     def _key_state_lost(self, reason: str) -> None:
         """Backend сломался на ходу: остановиться и вернуться к таймауту."""
         if not self.key_state:
             return
         self.key_state = False
         self._held_moves.clear()
+        self._boost_held = 0
+        self._boost_release()
         self.last_input = time.monotonic()
         self._say("warn", tr(f"key-state отключился ({reason}) — дальше обычное удержание",
                              f"key-state stopped ({reason}) — falling back to the usual hold mode"))
@@ -1400,6 +1451,8 @@ class Remote:
                 "  a / d         turn left / right        (arrows ← → too)",
                 "  space, Esc    STOP (everything at once)",
                 "  ] [  or + -  speed up / down (1..12)",
+                "  Shift (hold)  boost: speed 12, release — the previous speed",
+                "                (needs key-state; Shift+Q still disconnects)",
                 "  1..8          light: 1 red, 2 orange, 3 yellow, 4 green,",
                 "                5 cyan, 6 blue, 7 purple, 8 white",
                 "  0             lights off",
@@ -1432,6 +1485,8 @@ class Remote:
                 "  a / d         разворот влево/вправо   (стрелки ← → тоже)",
                 "  пробел, Esc   СТОП (мгновенно всё)",
                 "  ] [  или + -  скорость больше / меньше (1..12)",
+                "  Shift зажать  буст: скорость 12, отпустить — прежняя скорость",
+                "                (нужен key-state; Shift+Q по-прежнему отключает)",
                 "  1..8          подсветка: 1 красный, 2 оранжевый, 3 жёлтый,",
                 "                4 зелёный, 5 голубой, 6 синий, 7 фиолетовый, 8 белый",
                 "  0             выключить подсветку",
@@ -2372,6 +2427,7 @@ _EVDEV_KEY_ACTION = {  # коды клавиш Linux -> действие (физ
     31: "back", 108: "back",    # S, ↓
     30: "left", 105: "left",    # A, ←
     32: "right", 106: "right",  # D, →
+    42: "boost", 54: "boost",   # Shift (левый/правый) — буст скорости в пульте
 }
 # struct input_event: timeval (два машинных слова) + type, code (u16) + value (i32).
 _EVENT = struct.Struct(("ll" if struct.calcsize("l") == 8 else "qq") + "HHi")
@@ -2505,6 +2561,7 @@ class WinApiKeyState:
     LETTER_SCANCODE = {"fwd": 0x11, "left": 0x1E, "back": 0x1F, "right": 0x20}  # W A S D
     LETTER_VK = {"fwd": 0x57, "left": 0x41, "back": 0x53, "right": 0x44}
     ARROW_VK = {"fwd": 0x26, "back": 0x28, "left": 0x25, "right": 0x27}
+    BOOST_VK = (0xA0, 0xA1)  # VK_LSHIFT, VK_RSHIFT — буст скорости в пульте
 
     def __init__(self, on_change, on_fail) -> None:
         self._on_change = on_change
@@ -2536,6 +2593,7 @@ class WinApiKeyState:
             # работает и при русской раскладке (MAPVK_VSC_TO_VK_EX = 2).
             vk = self._user32.MapVirtualKeyExW(scancode, 2, hkl) or self.LETTER_VK[action]
             vk_by_action[action] = (vk, self.ARROW_VK[action])
+        vk_by_action["boost"] = self.BOOST_VK
         self._vk_by_action = vk_by_action
         self._task = asyncio.get_running_loop().create_task(self._poll())
         return None
