@@ -5,6 +5,7 @@ Single-file Python CLI remote for Apitor robots (R, J, S, Q, X, Wheels) over Blu
 ## Commands
 
 - Install: `python3 -m venv .venv && .venv/bin/pip install -r requirements.txt` (Python 3.10+; only dependency: `apitor-ble>=0.3.0`)
+- Double-click launchers: `run.sh` / `run.bat` do the same as Install+Run in one file (create `.venv`, install `apitor-ble` when missing, then `exec` the app with the same flags). `run.sh` is executable in git, uses bash builtins only (`${0%/*}` instead of `dirname`), and re-opens a terminal emulator (foot, kitty, gnome-terminal, …) when started without a TTY from a graphical session; `APITOR_NO_TERM=1` suppresses that, `PYTHON=…` picks the interpreter. `run.bat` is ASCII + CRLF on purpose (cmd.exe codepage).
 - Run: `.venv/bin/python apitor_remote.py` — requires a real terminal (exits 2 if stdin is not a TTY)
 - Without a robot: `.venv/bin/python apitor_remote.py --simulate` — prints BLE command frames to stdout instead of connecting (use this to verify changes)
 - Run a program file: `.venv/bin/python apitor_remote.py --program examples/квадрат.txt` (`examples/square.txt` is the English version)
