@@ -251,6 +251,18 @@ _STEP_WORDS = {
     "blink": {"ru": "мигнуть", "en": "blink"},
 }
 
+# Значки для живой строки редактора: у каждого действия ровно один символ.
+# Их же принимает парсер файла: «↑5 →2» == «вперёд 5 · вправо 2».
+_STEP_SYMBOLS = {
+    "fwd": "↑",
+    "back": "↓",
+    "left": "←",
+    "right": "→",
+    "pause": "‖",
+    "blink": "✦",
+    "color": "●",
+}
+
 # Прощающий парсер: команды на русском и английском (можно вперемешку).
 _STEP_SYNONYMS = {
     "вперёд": "fwd", "вперед": "fwd", "forward": "fwd", "forwards": "fwd", "ahead": "fwd",
@@ -262,6 +274,9 @@ _STEP_SYNONYMS = {
     "пауза": "pause", "pause": "pause", "wait": "pause",
     "цвет": "color", "color": "color", "colour": "color",
     "мигнуть": "blink", "blink": "blink", "flash": "blink",
+    # те же действия значками: «↑5» == «вперёд 5» (см. _STEP_SYMBOLS)
+    "↑": "fwd", "↓": "back", "←": "left", "→": "right",
+    "‖": "pause", "✦": "blink", "●": "color",
 }
 _HEADER_SYNONYMS = {
     "повтор": "repeat", "repeat": "repeat",
@@ -279,11 +294,11 @@ class Step:
 
 
 def step_text(step: Step) -> str:
-    """Шаг словами: «вперёд 5», «пауза», «цвет 3»."""
-    word = _STEP_WORDS[step.kind][LANG]
+    """Шаг значком для строки редактора: «↑5», «‖», «●3»."""
+    symbol = _STEP_SYMBOLS[step.kind]
     if step.kind == "color" or step.value != 1:
-        return f"{word} {step.value}"
-    return word
+        return f"{symbol}{step.value}"
+    return symbol
 
 
 class EditorResult:
@@ -514,8 +529,8 @@ class ProgramEditor:
 def parse_program(text: str, max_steps: int = 0):
     """Прощающий парсер файла: (шаги, повтор, скорость, ошибки).
 
-    Понимает русский и английский, е/ё, регистр, «× x *», запятые;
-    «#» — комментарий. Ошибки — строки с номером строки.
+    Понимает русский и английский, е/ё, регистр, «× x *», запятые,
+    значки действий (↑↓←→‖✦●); «#» — комментарий. Ошибки — строки с номером строки.
     """
     steps: list[Step] = []
     repeat = 1
@@ -527,7 +542,7 @@ def parse_program(text: str, max_steps: int = 0):
         line = raw.split("#", 1)[0].lower().replace("ё", "е")
         line = line.replace("×", " ").replace("*", " ").replace(",", " ")
         line = re.sub(r"x(?=\d)", " ", line)  # «вперёд x5» == «вперёд 5»
-        tokens = re.findall(r"[а-яa-z]+|\d+", line)
+        tokens = re.findall(r"[а-яa-z]+|\d+|[↑↓←→‖✦●]", line)
         i = 0
         while i < len(tokens):
             tok = tokens[i]
