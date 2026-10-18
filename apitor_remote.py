@@ -21,6 +21,9 @@
 Режим программы: нажмите `p` — набирайте шаги (w/a/s/d — вперёд/назад/
 влево/вправо, пробел — пауза, c — цвет, b — мигнуть, цифры — число шага),
 Enter — запуск. Программа пишется живой строкой; f/g — сохранить/загрузить.
+Esc — вернуться в пульт (программа остаётся), x — очистить программу,
+E — правка во внешнем редакторе ($EDITOR/$VISUAL, иначе nvim/nano/vi;
+на время редактора горячие клавиши пульта выключены).
 Файлы простые: «вперёд 5», «вправо 2», понимаются и по-русски, и по-английски.
 
 Язык интерфейса: --lang en (один раз, запоминается в config.json) или --lang ru.
@@ -60,8 +63,12 @@ import json
 import logging
 import os
 import re
+import shlex
+import shutil
 import struct
+import subprocess
 import sys
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -196,6 +203,7 @@ KEYMAP: dict[str, str] = {
     "f": "save_prog", "F": "save_prog",
     "g": "load_prog", "G": "load_prog",
     "j": "journal", "J": "journal",
+    "x": "clear_prog", "X": "clear_prog",
     "t": "test", "i": "identify", "l": "latch", "h": "help", "?": "help",
     "\x03": "quit",  # Ctrl+C (терминал в "сыром" режиме)
 }
@@ -278,12 +286,12 @@ class EditorResult:
     __slots__ = ("action", "text")
 
     def __init__(self, action: str, text: str = "") -> None:
-        self.action = action  # line | note | warn | clear | run | save | load | remote
+        self.action = action  # line | note | warn | run | save | load | remote
         self.text = text
 
 
 class _RunAbort(Exception):
-    """Программа прервана (Esc, p, отключение или потеря связи)."""
+    """Программа прервана (Esc — в пульт, p — в режим программы, отключение или потеря связи)."""
 
 
 class ProgramEditor:
@@ -291,7 +299,6 @@ class ProgramEditor:
 
     DIGIT_GAP = 1.0       # цифры, набранные подряд, — одно число
     CAPTURE_WINDOW = 1.5  # окно после c/r/клавиш скорости для «постфикса»
-    ESC_WINDOW = 0.8      # двойной Esc очищает программу
 
     def __init__(self, *, step_time=DEFAULT_STEP_TIME, turn_time=DEFAULT_TURN_TIME,
                  pause_time=DEFAULT_PAUSE_TIME, blink_time=DEFAULT_BLINK_TIME,
@@ -309,7 +316,6 @@ class ProgramEditor:
         self._capture: str | None = None  # speed | repeat | color
         self._capture_deadline = 0.0
         self._capture_digits = ""
-        self._last_esc = 0.0
 
     # -- состояние ----------------------------------------------------------- #
     def is_empty(self) -> bool:
@@ -320,7 +326,6 @@ class ProgramEditor:
         self.repeat = 1
         self._capture = None
         self._digit_run = ""
-        self._last_esc = 0.0
 
     def set_program(self, steps: list[Step], repeat: int, speed: int | None) -> None:
         self.steps = [Step(s.kind, s.value) for s in steps]
@@ -348,8 +353,8 @@ class ProgramEditor:
     def line(self) -> str:
         if not self.steps:
             return tr(
-                "(пусто) — w/a/s/d — шаги, Enter — запуск, p — пульт, h — справка",
-                "(empty) — w/a/s/d — steps, Enter — run, p — remote, h — help",
+                "(пусто) — w/a/s/d — шаги, Enter — запуск, Esc — пульт, h — справка",
+                "(empty) — w/a/s/d — steps, Enter — run, Esc — remote, h — help",
             )
         words = [step_text(s) for s in self.steps]
         if len(words) > 8:
@@ -491,23 +496,13 @@ class ProgramEditor:
                 self.steps.pop()
             return EditorResult("line", self.line())
         if key == "esc":
-            if now - self._last_esc <= self.ESC_WINDOW:
-                self._last_esc = 0.0
-                self.clear()
-                return EditorResult("clear", tr("программа очищена", "program cleared"))
-            self._last_esc = now
-            return EditorResult("note", tr(
-                "Esc ещё раз — очистить программу",
-                "Esc again to clear the program",
-            ))
+            return EditorResult("remote")
         if key == "enter":
             return EditorResult("run")
         if key == "f":
             return EditorResult("save")
         if key == "g":
             return EditorResult("load")
-        if key == "p":
-            return EditorResult("remote")
         return None
 
 
@@ -838,11 +833,13 @@ class Remote:
         )
         self._run_task: asyncio.Task | None = None
         self._run_paused = False
-        self._run_abort: str | None = None  # editor | remote
-        self._run_clear = False
+        self._run_abort: str | None = None  # remote | editor
         self._run_step = 0
         self._run_total = 0
-        self._last_esc = 0.0
+        self._external_editor = threading.Event()  # внешний редактор владеет клавиатурой
+        self._reader_paused = threading.Event()    # поток ввода подтвердил паузу
+        self._termios_original = None              # терминал до "сырого" режима
+        self._pending_output: list[tuple[str, str]] = []  # вывод, отложенный на время редактора
 
         self.keys: asyncio.Queue = asyncio.Queue()
         self._connect_task: asyncio.Task | None = None
@@ -850,21 +847,30 @@ class Remote:
         self._loop: asyncio.AbstractEventLoop | None = None
 
     # -- вывод --------------------------------------------------------------- #
-    def _out(self, text: str, end: str = "\n") -> None:
-        """Печать без [тега] (строки приглашений, эхо ввода)."""
+    def _emit(self, text: str, end: str = "\n") -> None:
+        """Печать; во время внешнего редактора сообщения копятся и не мешают."""
+        if self._external_editor.is_set():
+            self._pending_output.append((text, end))
+            return
         try:
             print(text, end=end, flush=True)
-        except UnicodeEncodeError:
+        except UnicodeEncodeError:  # старые консоли Windows
             print(text.encode("ascii", "replace").decode("ascii"), end=end, flush=True)
 
+    def _flush_pending_output(self) -> None:
+        pending, self._pending_output = self._pending_output, []
+        for text, end in pending:
+            try:
+                print(text, end=end, flush=True)
+            except UnicodeEncodeError:
+                print(text.encode("ascii", "replace").decode("ascii"), end=end, flush=True)
 
-    # -- вывод --------------------------------------------------------------- #
+    def _out(self, text: str, end: str = "\n") -> None:
+        """Печать без [тега] (строки приглашений, эхо ввода)."""
+        self._emit(text, end=end)
+
     def _say(self, tag: str, message: str) -> None:
-        line = f"[{tag}] {message}"
-        try:
-            print(line, flush=True)
-        except UnicodeEncodeError:  # старые консоли Windows
-            print(line.encode("ascii", "replace").decode("ascii"), flush=True)
+        self._emit(f"[{tag}] {message}")
 
     def _dbg(self, message: str) -> None:
         if self.verbose:
@@ -1364,6 +1370,7 @@ class Remote:
                 "  0             lights off",
                 "  e / Shift+E   motor 3 (accessory): forward / back — toggle",
                 "  p             program mode: enter steps, run, files",
+                "  x             clear the program (stay in the current mode)",
                 "  R             run the last program (loaded or previous)",
                 "  F / G         save / load a program file",
                 "  J             toggle the run journal",
@@ -1392,6 +1399,7 @@ class Remote:
                 "  0             выключить подсветку",
                 "  e / Shift+E   мотор 3 (аксессуар, если есть): вперёд / назад — тумблер",
                 "  p             режим программы: набор шагов, запуск, файлы",
+                "  x             очистить программу (режим не меняется)",
                 "  R             запустить последнюю программу (загруженную или прошлую)",
                 "  F / G         сохранить / загрузить программу файлом",
                 "  J             журнал прогонов вкл/выкл",
@@ -1423,10 +1431,11 @@ class Remote:
                 "  ] [ + - = _   speed; digits right after set it exactly: ]12",
                 "  r             program repeat +1 (r5 — exactly 5 times)",
                 "  Backspace     delete the last step",
-                "  Esc Esc       clear the program",
+                "  x             clear the program (stay in this mode)",
+                "  E             edit the program in $EDITOR",
                 "  Enter         run",
                 "  f / g         save / load a program file",
-                "  p             back to remote",
+                "  Esc           back to remote (the program stays)",
                 "  h, ?          this help (Ctrl+C — quit)",
             )
         else:
@@ -1440,10 +1449,11 @@ class Remote:
                 "  ] [ + - = _   скорость; цифры сразу после — точное значение: ]12",
                 "  r             повтор программы +1 (r5 — ровно 5 раз)",
                 "  Backspace     удалить последний шаг",
-                "  Esc Esc       очистить программу",
+                "  x             очистить программу (остаться в этом режиме)",
+                "  E             редактировать программу в $EDITOR",
                 "  Enter         запустить",
                 "  f / g         сохранить / загрузить программу",
-                "  p             назад в пульт",
+                "  Esc           назад в пульт (программа остаётся)",
                 "  h, ?          эта справка (Ctrl+C — выход)",
             )
         for line in lines:
@@ -1454,18 +1464,16 @@ class Remote:
         if LANG == "en":
             lines = (
                 "  space         pause / resume",
-                "  Esc           abort (back to the editor)",
-                "  Esc Esc       abort and clear the program",
-                "  p             abort and back to remote",
+                "  Esc           abort (back to remote)",
+                "  p             abort and switch to program mode",
                 "  Shift+Q       disconnect (the program stops)",
                 "  h, ?          this help (Ctrl+C — quit)",
             )
         else:
             lines = (
                 "  пробел        пауза / продолжить",
-                "  Esc           прервать (вернуться в редактор)",
-                "  Esc Esc       прервать и очистить программу",
-                "  p             прервать и в пульт",
+                "  Esc           прервать (вернуться в пульт)",
+                "  p             прервать и перейти в режим программы",
                 "  Shift+Q       отключиться (программа остановится)",
                 "  h, ?          эта справка (Ctrl+C — выход)",
             )
@@ -1541,6 +1549,8 @@ class Remote:
             await self._open_load_prompt()
         elif action == "journal":
             self._toggle_journal()
+        elif action == "clear_prog":
+            self._on_clear_prog()
         elif action == "test":
             await self._test_drive()
             self._drain_keys()
@@ -1556,10 +1566,12 @@ class Remote:
         return tr(
             "w/a/s/d — шаги · 0..9 — число · c цвет · b мигнуть · пробел пауза · "
             "] [ — скорость (цифры сразу: ]12) · r — повтор · Backspace — убрать шаг · "
-            "Enter — запуск · f/g — файл · p — пульт · h — справка",
+            "Enter — запуск · x — очистить · E — редактор ($EDITOR) · Esc — пульт · "
+            "f/g — файл · h — справка",
             "w/a/s/d — steps · 0..9 — number · c color · b blink · space pause · "
             "] [ — speed (digits right after: ]12) · r — repeat · Backspace — delete step · "
-            "Enter — run · f/g — file · p — remote · h — help",
+            "Enter — run · x — clear · E — editor ($EDITOR) · Esc — remote · "
+            "f/g — file · h — help",
         )
 
     async def _stop_if_moving(self, reason: str) -> None:
@@ -1580,6 +1592,140 @@ class Remote:
         self.mode = "remote"
         self._say("mode", tr(f"пульт (скорость {self.speed})",
                              f"remote (speed {self.speed})"))
+
+    def _on_clear_prog(self) -> None:
+        """x: очистить программу и остаться в текущем режиме."""
+        self.editor.clear()
+        self._draft_loaded = False
+        draft = self.program_dir / DRAFT_FILE
+        try:
+            if draft.exists():
+                draft.unlink()
+        except OSError as exc:
+            self._dbg(f"черновик не стереть: {exc!r}")
+        self._say("prog", tr("программа очищена", "program cleared"))
+        if self.mode == "editor":
+            self._say("prog", self.editor.line())
+
+    # -- внешний редактор ($EDITOR) ------------------------------------------- #
+    def _editor_command(self) -> list[str] | None:
+        """Команда внешнего редактора: $EDITOR/$VISUAL, иначе известные имена."""
+        for env in ("EDITOR", "VISUAL"):
+            value = os.environ.get(env)
+            if value:
+                parts = shlex.split(value)
+                if parts:
+                    return parts
+        candidates = ("edit", "notepad") if IS_WINDOWS else ("nvim", "nano", "vi")
+        for name in candidates:
+            path = shutil.which(name)
+            if path:
+                return [path]
+        return None
+
+    def _pause_terminal_for_editor(self) -> list | None:
+        """Вернуть терминал в обычный режим на время внешнего редактора."""
+        if IS_WINDOWS:
+            return None
+        fd = sys.stdin.fileno()
+        try:
+            raw = termios.tcgetattr(fd)
+            termios.tcsetattr(fd, termios.TCSADRAIN, self._termios_original)
+        except Exception as exc:  # noqa: BLE001 — редактор всё равно откроется
+            self._dbg(f"терминал не переключить на время редактора: {exc!r}")
+            return None
+        return raw
+
+    def _resume_terminal_after_editor(self, raw) -> None:
+        """Вернуть "сырой" режим терминала после внешнего редактора."""
+        if IS_WINDOWS or raw is None:
+            return
+        fd = sys.stdin.fileno()
+        with contextlib.suppress(Exception):
+            termios.tcsetattr(fd, termios.TCSADRAIN, raw)
+
+    async def _edit_program_external(self) -> None:
+        """E: отдать текущую программу внешнему редактору и загрузить обратно."""
+        cmd = self._editor_command()
+        if cmd is None:
+            self._say("warn", tr(
+                "внешний редактор не найден: задайте $EDITOR или $VISUAL "
+                "(Windows: edit/notepad; Linux: nvim/nano/vi)",
+                "no external editor found: set $EDITOR or $VISUAL "
+                "(Windows: edit/notepad; Linux: nvim/nano/vi)",
+            ))
+            return
+        try:
+            self.program_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            self._say("err", tr(f"не создать папку программ: {exc}",
+                                f"cannot create the program folder: {exc}"))
+            return
+        try:
+            fd, name = tempfile.mkstemp(prefix="_edit_", suffix=".txt", dir=self.program_dir)
+        except OSError as exc:
+            self._say("err", tr(f"не создать временный файл: {exc}",
+                                f"cannot create a temporary file: {exc}"))
+            return
+        path = Path(name)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(self.editor.serialize())
+        except OSError as exc:
+            self._say("err", tr(f"не записать временный файл: {exc}",
+                                f"cannot write the temporary file: {exc}"))
+            with contextlib.suppress(OSError):
+                path.unlink()
+            return
+        self._say("prog", tr(
+            f"открываю редактор ({' '.join(cmd)}) — горячие клавиши пульта выключены",
+            f"opening the editor ({' '.join(cmd)}) — the remote hotkeys are off",
+        ))
+        self._external_editor.set()
+        self._reader_paused.wait(timeout=1.0)
+        self._drain_keys()
+        raw = self._pause_terminal_for_editor()
+        try:
+            await asyncio.to_thread(subprocess.run, cmd + [str(path)])
+        except Exception as exc:  # noqa: BLE001 — редактор может не запуститься
+            self._say("err", tr(f"редактор не запустился: {exc}",
+                                f"the editor did not start: {exc}"))
+            self._resume_terminal_after_editor(raw)
+            self._external_editor.clear()
+            self._flush_pending_output()
+            with contextlib.suppress(OSError):
+                path.unlink()
+            return
+        self._resume_terminal_after_editor(raw)
+        self._external_editor.clear()
+        self._flush_pending_output()
+        try:
+            text = path.read_text("utf-8")
+        except OSError as exc:
+            self._say("err", tr(f"не прочитать файл после редактора: {exc}",
+                                f"cannot read the file after the editor: {exc}"))
+            return
+        finally:
+            with contextlib.suppress(OSError):
+                path.unlink()
+        steps, repeat, speed, errors = parse_program(text, self.max_steps)
+        if errors:
+            for message in errors[:5]:
+                self._say("err", f"{path.name}: {message}")
+            if len(errors) > 5:
+                self._say("err", tr(f"…и ещё {len(errors) - 5} ошибок",
+                                    f"…and {len(errors) - 5} more errors"))
+            self._say("warn", tr("программа не изменена — исправьте ошибки в файле и повторите",
+                                 "the program is unchanged — fix the errors and try again"))
+            if self.mode == "editor":
+                self._say("prog", self.editor.line())
+            return
+        self.editor.set_program(steps, repeat, speed)
+        self.speed = self.editor.speed
+        n = len(steps)
+        self._say("prog", tr(f"обновлено из редактора ({n} {steps_word(n)})",
+                             f"updated from the editor ({n} {steps_word(n)})"))
+        self._say("prog", self.editor.line())
 
     def _load_draft(self) -> None:
         draft = self.program_dir / DRAFT_FILE
@@ -1613,6 +1759,9 @@ class Remote:
         return await self._handle_action(action)
 
     async def _handle_editor_key(self, key: str) -> bool:
+        if key == "E":
+            await self._edit_program_external()
+            return True
         result = self.editor.key(key, time.monotonic())
         if result is None:
             return False
@@ -1620,9 +1769,6 @@ class Remote:
             self._say("prog", result.text)
         elif result.action == "warn":
             self._say("warn", result.text)
-        elif result.action == "clear":
-            self._say("prog", result.text)
-            self._say("prog", self.editor.line())
         elif result.action == "run":
             await self._start_program_run(from_editor=True)
         elif result.action == "save":
@@ -1640,15 +1786,10 @@ class Remote:
                       else tr("продолжаю", "resuming"))
             return True
         if key == "esc":
-            now = time.monotonic()
-            if now - self._last_esc <= self.editor.ESC_WINDOW:
-                self._run_clear = True  # двойной Esc — прервать и очистить
-            self._last_esc = now
-            self.editor._last_esc = now  # и после возврата в редактор
-            self._run_abort = "editor"
+            self._run_abort = "remote"  # Esc: прервать и вернуться в пульт
             return True
         if key == "p":
-            self._run_abort = "remote"
+            self._run_abort = "editor"  # P: прервать и перейти в режим программы
             return True
         return False
 
@@ -1878,8 +2019,6 @@ class Remote:
         self.speed = self.editor.speed
         self._run_paused = False
         self._run_abort = None
-        self._run_clear = False
-        self._last_esc = 0.0
         self.mode = "run"
         self._run_task = asyncio.create_task(self._run_worker())
 
@@ -2004,23 +2143,19 @@ class Remote:
             self._journal_write(tr("готово", "done"), total, planned, elapsed)
         else:
             await self._led_flash(Color.RED, 0.35, prev_led)
-            if self._run_abort == "remote":
+            if self._run_abort == "editor":
+                self.mode = "editor"
+                self._say("run", tr(
+                    f"прервано на шаге {self._run_step} из {total} — режим программы",
+                    f"aborted at step {self._run_step} of {total} — program mode",
+                ))
+                self._say("prog", self.editor.line())
+            else:
                 self.mode = "remote"
                 self._say("run", tr(
                     f"прервано на шаге {self._run_step} из {total} — пульт",
                     f"aborted at step {self._run_step} of {total} — remote",
                 ))
-            else:
-                self.mode = "editor"
-                self._say("run", tr(
-                    f"прервано на шаге {self._run_step} из {total}",
-                    f"aborted at step {self._run_step} of {total}",
-                ))
-            if self._run_clear:
-                self.editor.clear()
-                self._say("prog", tr("программа очищена", "program cleared"))
-            if self.mode == "editor":
-                self._say("prog", self.editor.line())
             self._journal_write(
                 tr(f"прервано на шаге {self._run_step}/{total}",
                    f"aborted at step {self._run_step}/{total}"),
@@ -2032,14 +2167,20 @@ class Remote:
             await self._call(self.robot.all_leds, prev_led)
         self._run_paused = False
         self._run_abort = None
-        self._run_clear = False
         self._run_task = None
 
     # -- потоки чтения клавиатуры -------------------------------------------- #
     def _reader_thread_posix(self) -> None:
         fd = sys.stdin.fileno()
         while True:
+            if self._external_editor.is_set():
+                self._reader_paused.set()
+                time.sleep(0.05)  # клавиатура отдана внешнему редактору
+                continue
+            self._reader_paused.clear()
             try:
+                if not select.select([fd], [], [], 0.1)[0]:
+                    continue
                 key = read_key_posix(fd)
             except Exception as exc:  # noqa: BLE001 — ввод может закрыться в любой момент
                 self._dbg(f"ошибка чтения stdin: {exc!r}")
@@ -2053,6 +2194,14 @@ class Remote:
         import msvcrt
 
         while True:
+            if self._external_editor.is_set():
+                self._reader_paused.set()
+                time.sleep(0.05)  # клавиатура отдана внешнему редактору
+                continue
+            self._reader_paused.clear()
+            if not msvcrt.kbhit():
+                time.sleep(0.02)
+                continue
             try:
                 char = msvcrt.getwch()
             except KeyboardInterrupt:
@@ -2114,6 +2263,9 @@ class Remote:
         elif self.key_state_devices:
             self._say("warn", tr("--key-state-device работает только вместе с --key-state",
                                  "--key-state-device only works together with --key-state"))
+        if not IS_WINDOWS:
+            with contextlib.suppress(Exception):
+                self._termios_original = termios.tcgetattr(sys.stdin.fileno())
         with RawTerminal():
             target = self._reader_thread_windows if IS_WINDOWS else self._reader_thread_posix
             threading.Thread(target=target, daemon=True).start()
