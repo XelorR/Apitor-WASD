@@ -27,7 +27,9 @@
 
 Режим программы: нажмите `p` — набирайте шаги (w/a/s/d — вперёд/назад/
 влево/вправо, пробел — пауза, c — цвет, b — мигнуть, цифры — число шага),
-Enter — запуск. Программа пишется живой строкой; f/g — сохранить/загрузить.
+Enter — запуск, `*` — повтор программы, r/R/t/T — проехать маршрут обратно
+(как в пульте, только из редактора). Программа пишется живой строкой;
+f/g — сохранить/загрузить.
 Esc — вернуться в пульт (программа остаётся), x — очистить программу,
 e или E — правка во внешнем редакторе ($EDITOR/$VISUAL, иначе nvim/nano/vi):
 эта клавиша работает в любом режиме, и из пульта тоже.
@@ -416,15 +418,23 @@ REVERSE_MIRROR = {
 }
 
 
-def reversed_steps(editor, mode: str, *, drop_pauses: bool = False) -> list[Step]:
+def reversed_steps(editor, mode: str, *, drop_pauses: bool = False,
+                   base_light: int | None = None) -> list[Step]:
     """Программа обратного проезда: те же участки пути в обратном порядке.
 
     Длительности каждого действия сохраняются (шаги с числом превращаются в
     секунды), паузы тоже — если не попросили обратное (drop_pauses).
 
-    Свет и скорость расставляются заново: перед каждым участком стоит ровно
-    та подсветка и та скорость, при которых этот участок проезжали вперёд,
-    поэтому в обратную сторону путь проезжается при том же свете.
+    Свет и скорость ставятся там, где они менялись, а не там, где стояли в
+    исходной программе. Например «скорость 6, вперёд, вправо, скорость 12,
+    назад, вперёд» проезжается обратно со скоростями «12, 12, 12, 6, 6»:
+    реверс начинается со скорости конца маршрута, а на точке перелома (где
+    в исходной программе стояло «скорость 12») включается 6 и держится до
+    конца. Свет — так же.
+
+    base_light — номер цвета, который горит сейчас (до прогона): участки,
+    проеханные «при том, что горело», в обратную сторону закрываются этим
+    цветом. None — цвет неизвестен, такие участки не трогаются.
     """
     mirror = REVERSE_MIRROR[mode]
     route: list[tuple[Step, float, int | None, int]] = []
@@ -439,14 +449,15 @@ def reversed_steps(editor, mode: str, *, drop_pauses: bool = False) -> list[Step
             continue
         route.append((step, editor._step_seconds(step), light, speed))
     out: list[Step] = []
-    cur_light: int | None = None
+    cur_light = base_light
     cur_speed = editor.speed
     for step, seconds, light, speed in reversed(route):
         if step.kind == "pause" and drop_pauses:
             continue
-        if light is not None and light != cur_light:
-            out.append(Step("color", light))
-            cur_light = light
+        want_light = base_light if light is None else light
+        if want_light is not None and want_light != cur_light:
+            out.append(Step("color", want_light))
+            cur_light = want_light
         if speed != cur_speed:
             out.append(Step("speed", speed))
             cur_speed = speed
@@ -698,7 +709,7 @@ class ProgramEditor:
             return self._speed(+1, now)
         if key in ("[", "-", "_"):
             return self._speed(-1, now)
-        if key == "r":
+        if key == "*":   # «умножить»: повтор программы (r — обратный проезд)
             self.repeat = 1 if self.repeat >= 99 else self.repeat + 1
             self._arm("repeat", now)
             return EditorResult("line", self.line())
@@ -966,6 +977,7 @@ _KEY_PROTO_ON = b"\x1b[>1u"
 _KEY_PROTO_OFF = b"\x1b[<u"
 _KEY_PROTO_SUPPORTED = False   # терминал ответил на запрос «умеешь?»
 _KEY_PROTO_ACTIVE = False      # расширенный ввод включён прямо сейчас
+_KEY_PROTO_PUSHBACK = bytearray()  # байты, случайно съеденные при опросе терминала
 
 # Shift+цифра или Shift+знак: терминал присылает символ, а не цифру.
 _SHIFTED_SYMBOLS = {
@@ -1047,7 +1059,9 @@ def _enable_key_protocol(fd: int) -> None:
             break
         buf += byte
         if not (b"\x1b[?".startswith(buf) or buf.startswith(b"\x1b[?")):
-            return      # это не ответ, а нажатие клавиши — не съедаем чужое
+            # Это не ответ на запрос, а нажатие клавиши: вернём его ввод.
+            _KEY_PROTO_PUSHBACK.extend(buf)
+            return
         if buf.startswith(b"\x1b[?") and buf.endswith(b"u"):
             break
     if not (buf.startswith(b"\x1b[?") and buf.endswith(b"u")):
@@ -1079,7 +1093,12 @@ def read_key_posix(fd: int) -> str | None:
     «up»/«down»/«left»/«right»); остальное — «сырой» символ (раскладку
     переводит главный цикл, чтобы текстовые подсказки читали кириллицу как есть).
     """
-    first = os.read(fd, 1)
+    first = b""
+    if _KEY_PROTO_PUSHBACK:      # байт, съеденный опросом терминала при старте
+        first = bytes(_KEY_PROTO_PUSHBACK[:1])
+        del _KEY_PROTO_PUSHBACK[:1]
+    if not first:
+        first = os.read(fd, 1)
     if not first:
         return "quit"  # поток ввода закрыт
     if first == b"\x1b":
@@ -2166,9 +2185,10 @@ class Remote:
             self._apply_speed_if_moving()
 
     def _shift_held(self) -> bool:
-        """Зажат ли Shift (виден только с key-state: это клавиша буста).
+        """Зажат ли Shift (key-state: это клавиша буста).
 
-        Нужен для Shift+Enter: прогон программы без пауз.
+        Нужен для Shift+Enter — прогона без пауз; в терминалах с расширенными
+        клавишами Shift+Enter приходит от самого терминала («s-enter»).
         """
         return self._boost_held > 0
 
@@ -2414,14 +2434,14 @@ class Remote:
                 "  (macro)       timed steps: ↑1.2s — forward 1.2 s (1.2с, 1.2sec too);",
                 "                »8 — change the speed from here (a recorded macro)",
                 "  ] [ + - = _   speed; digits right after set it exactly: ]12",
-                "  r             program repeat +1 (r5 — exactly 5 times)",
+                "  *             program repeat +1 (*5 — exactly 5 times)",
                 "  Backspace     delete the last step",
                 "  x             clear the program (stay in this mode)",
                 "  e / E         edit the program in $EDITOR",
                 "  Enter         run",
-                "  Shift+Enter   run without pauses (needs key-state)",
-                "  R / T         drive the route back: backwards / robot turned",
-                "                (with Shift — the same without pauses)",
+                "  Shift+Enter   run without pauses (key-state or the terminal)",
+                "  r / R / t / T drive the route back: backwards / robot turned",
+                "                (capitals — the same without pauses)",
                 "  f / g         save / load a program file",
                 "  Esc           back to remote (the program stays)",
                 "  h, ?          this help (Ctrl+C — quit)",
@@ -2437,14 +2457,14 @@ class Remote:
                 "  (макрос)      шаги с секундами: ↑1.2с — вперёд 1.2 с (можно 1.2s, 1.2сек);",
                 "                »8 — сменить скорость с этого места (запись макроса)",
                 "  ] [ + - = _   скорость; цифры сразу после — точное значение: ]12",
-                "  r             повтор программы +1 (r5 — ровно 5 раз)",
+                "  *             повтор программы +1 (*5 — ровно 5 раз)",
                 "  Backspace     удалить последний шаг",
                 "  x             очистить программу (остаться в этом режиме)",
                 "  e / E         редактировать программу в $EDITOR",
                 "  Enter         запустить",
-                "  Shift+Enter   запустить без пауз (нужен key-state)",
-                "  R / T         проехать маршрут обратно: задним ходом / развернув",
-                "                робота (с Shift — то же самое, но без пауз)",
+                "  Shift+Enter   запустить без пауз (key-state или терминал)",
+                "  r / R / t / T проехать маршрут обратно: задним ходом / развернув",
+                "                робота (заглавные — то же самое, но без пауз)",
                 "  f / g         сохранить / загрузить программу",
                 "  Esc           назад в пульт (программа остаётся)",
                 "  h, ?          эта справка (Ctrl+C — выход)",
@@ -2577,12 +2597,12 @@ class Remote:
     def _prog_hint(self) -> str:
         return tr(
             "w/a/s/d — шаги · 0..9 — число · c цвет · b мигнуть · пробел пауза · "
-            "] [ — скорость (цифры сразу: ]12) · r — повтор · Backspace — убрать шаг · "
-            "Enter — запуск (с Shift — без пауз) · R/T — обратно · x — очистить · "
+            "] [ — скорость (цифры сразу: ]12) · * — повтор · Backspace — убрать шаг · "
+            "Enter — запуск (с Shift — без пауз) · r/R/t/T — обратно · x — очистить · "
             "e/E — редактор ($EDITOR) · Esc — пульт · f/g — файл · h — справка",
             "w/a/s/d — steps · 0..9 — number · c color · b blink · space pause · "
-            "] [ — speed (digits right after: ]12) · r — repeat · Backspace — delete step · "
-            "Enter — run (Shift — without pauses) · R/T — drive back · x — clear · "
+            "] [ — speed (digits right after: ]12) · * — repeat · Backspace — delete step · "
+            "Enter — run (Shift — without pauses) · r/R/t/T — drive back · x — clear · "
             "e/E — editor ($EDITOR) · Esc — remote · f/g — file · h — help",
         )
 
@@ -3092,7 +3112,8 @@ class Remote:
             return
         steps = [Step(s.kind, s.value, s.seconds) for s in self.editor.steps]
         if rev is not None:
-            steps = reversed_steps(self.editor, rev, drop_pauses=drop_pauses)
+            steps = reversed_steps(self.editor, rev, drop_pauses=drop_pauses,
+                                   base_light=NUMBER_BY_COLOR.get(self.led_color))
             if not steps:
                 self._say("warn", tr(
                     "обратный проезд пуст: в программе одни паузы",
