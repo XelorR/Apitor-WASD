@@ -11,6 +11,7 @@
     b / B ........ мигнуть подсветкой (цвет при этом не меняется)
     e / Shift+E .. мотор 3 (аксессуар): вперёд / назад (тумблером)
     p ............ режим программы (шаги, как у Big Trak / Лунохода)
+    m ............ записать макрос: делайте что угодно, Enter — стоп
     R ............ в пульте: запустить последнюю программу (если была)
     F / G ........ сохранить / загрузить программу файлом
     J ............ журнал прогонов вкл/выкл
@@ -26,6 +27,16 @@ Esc — вернуться в пульт (программа остаётся), 
 E — правка во внешнем редакторе ($EDITOR/$VISUAL, иначе nvim/nano/vi;
 на время редактора горячие клавиши пульта выключены).
 Файлы простые: «вперёд 5», «вправо 2», понимаются и по-русски, и по-английски.
+
+Макрос: нажмите `m` в пульте — пульт запомнит всё, что вы делаете (движение,
+свет, мигание, смену скорости), а паузы запишет ожиданием. Enter (или `m`
+ещё раз) — остановить запись: макрос становится программой, его можно сразу
+запустить (R), сохранить файлом (f/g) и править (p, Backspace, E). Это тот же
+формат программы, только у действий есть точная длительность: «вперёд 1.2с»
+(или «вперёд 1.2s» — пульт понимает с, s, сек, sec, секунды, seconds в любом
+интерфейсе), «пауза 0.4с», а «скорость 8» в середине файла меняет скорость
+по ходу. В редакторе такие шаги видны как ↑1.2с, ‖0.4с и »8; шаги и секунды
+спокойно соседствуют в одной программе.
 
 Язык интерфейса: --lang en (один раз, запоминается в config.json) или --lang ru.
 Настройки (длительности шагов, журнал и т. п.) — в
@@ -209,6 +220,12 @@ COLOR_BY_KEY = {
 COLOR_NAMES = {color: (ru, en) for color, ru, en in COLOR_BY_KEY.values()}
 COLOR_NAMES[Color.OFF] = ("выкл.", "off")
 
+# Шаг «цвет» хранит НОМЕР цвета (0 — выключить, 1..8 — клавиши подсветки):
+# у Color.WHITE в библиотеке значение 10, поэтому нужен свой пересчёт.
+COLOR_BY_NUMBER = {0: Color.OFF}
+COLOR_BY_NUMBER.update({int(key): entry[0] for key, entry in COLOR_BY_KEY.items()})
+NUMBER_BY_COLOR = {color: number for number, color in COLOR_BY_NUMBER.items()}
+
 # Символ -> действие. Стрелки приходят как "up"/"down"/"left"/"right".
 KEYMAP: dict[str, str] = {
     "q": "connect",
@@ -222,6 +239,7 @@ KEYMAP: dict[str, str] = {
     "b": "blink_led", "B": "blink_led",  # мигнуть подсветкой (в редакторе b — шаг)
     "e": "m3_fwd", "E": "m3_rev",
     "p": "prog", "P": "prog",
+    "m": "record_macro", "M": "record_macro",
     "r": "run_last", "R": "run_last",
     "f": "save_prog", "F": "save_prog",
     "g": "load_prog", "G": "load_prog",
@@ -237,11 +255,11 @@ KEYMAP.update({key: f"color:{key}" for key in COLOR_BY_KEY})
 _LAYOUT = {
     "й": "q", "ц": "w", "у": "e", "ф": "a", "ы": "s", "в": "d", "е": "t",
     "р": "h", "д": "l", "л": "k", "о": "j", "ш": "i", "к": "r", "а": "f", "п": "g",
-    "с": "c", "и": "b", "ч": "x", "з": "p",
+    "с": "c", "и": "b", "ч": "x", "з": "p", "ь": "m",
     "х": "[", "ъ": "]",
     "Й": "Q", "Ц": "W", "У": "E", "Ф": "A", "Ы": "S", "В": "D", "Е": "T",
     "Р": "H", "Д": "L", "Л": "K", "О": "J", "Ш": "I", "К": "R", "А": "F", "П": "G",
-    "С": "C", "И": "B", "Ч": "X", "З": "P",
+    "С": "C", "И": "B", "Ч": "X", "З": "P", "Ь": "M",
     "Х": "[", "Ъ": "]",
 }
 
@@ -260,7 +278,14 @@ def _to_latin_layout(char: str) -> str:
 #   pause  — сколько пауз (1..99)
 #   blink  — сколько раз мигнуть (1..99)
 #   color  — цвет 0..8 (0 — выключить)
+#   speed  — «скорость 8» в середине файла: сменить скорость по ходу
+# У шага может быть seconds вместо числа: «вперёд 1.2с» — макрос, где действие
+# длится ровно столько (шаги и секунды спокойно соседствуют в одной программе).
 COUNT_KINDS = ("fwd", "back", "left", "right", "pause", "blink")
+
+MIN_STEP_SECONDS = 0.05   # «вперёд 0.05с» — короче уже не действие
+MAX_STEP_SECONDS = 600.0  # и длиннее тоже (10 минут)
+STEP_PRECISION = 3        # секунды храним до миллисекунд (1.234)
 
 _STEP_WORDS = {
     "fwd": {"ru": "вперёд", "en": "forward"},
@@ -270,6 +295,7 @@ _STEP_WORDS = {
     "pause": {"ru": "пауза", "en": "pause"},
     "color": {"ru": "цвет", "en": "color"},
     "blink": {"ru": "мигнуть", "en": "blink"},
+    "speed": {"ru": "скорость", "en": "speed"},
 }
 
 # Значки для живой строки редактора: у каждого действия ровно один символ.
@@ -282,6 +308,7 @@ _STEP_SYMBOLS = {
     "pause": "‖",
     "blink": "✦",
     "color": "●",
+    "speed": "»",
 }
 
 # Прощающий парсер: команды на русском и английском (можно вперемешку).
@@ -297,27 +324,66 @@ _STEP_SYNONYMS = {
     "мигнуть": "blink", "blink": "blink", "flash": "blink",
     # те же действия значками: «↑5» == «вперёд 5» (см. _STEP_SYMBOLS)
     "↑": "fwd", "↓": "back", "←": "left", "→": "right",
-    "‖": "pause", "✦": "blink", "●": "color",
+    "‖": "pause", "✦": "blink", "●": "color", "»": "speed",
 }
 _HEADER_SYNONYMS = {
     "повтор": "repeat", "repeat": "repeat",
     "скорость": "speed", "speed": "speed",
 }
 
+# Число в файле: «5» — пять шагов, «1.2с» (1.2s, 1.2сек, 1.2секунды) — секунды.
+_NUMBER_RE = re.compile(
+    r"^(\d+(?:[.,]\d+)?)(\s*(?:секунд\w*|seconds?|сек|sec|с\b|s\b))?$"
+)
+# Токены строки: слова, числа (с единицей времени) и значки действий.
+_TOKEN_RE = re.compile(
+    r"[а-яa-z]+"
+    r"|\d+(?:[.,]\d+)?(?:\s*(?:секунд\w*|seconds?|сек|sec|с\b|s\b))?"
+    r"|[↑↓←→‖✦●»]"
+)
+
 
 class Step:
-    """Шаг программы (обычный класс: тесты грузят модуль через importlib)."""
-    __slots__ = ("kind", "value")
+    """Шаг программы (обычный класс: тесты грузят модуль через importlib).
 
-    def __init__(self, kind: str, value: int = 1) -> None:
+    seconds — длительность вместо числа шагов (шаг макроса): «вперёд 1.2с».
+    У color/speed/digit-шагов seconds нет.
+    """
+    __slots__ = ("kind", "value", "seconds")
+
+    def __init__(self, kind: str, value: int = 1, seconds: float | None = None) -> None:
         self.kind = kind
         self.value = value
+        self.seconds = seconds
+
+
+def split_number(token: str) -> tuple[int | None, float | None]:
+    """Токен числа: «5» → (5, None) шагов, «1.2с» → (None, 1.2) секунды."""
+    match = _NUMBER_RE.match(token)
+    if match is None:
+        return None, None
+    text, unit = match.group(1), match.group(2)
+    if unit is not None or "." in text or "," in text:
+        return None, float(text.replace(",", "."))
+    return int(text), None
+
+
+def secs_text(seconds: float) -> str:
+    """Длительность для строки и файла: «1.234», «0.5», «2» (до миллисекунд)."""
+    return f"{seconds:.3f}".rstrip("0").rstrip(".")
+
+
+def steps_are_timed(steps) -> bool:
+    """Макрос ли это: есть шаги с секундами или смена скорости по ходу."""
+    return any(step.seconds is not None or step.kind == "speed" for step in steps)
 
 
 def step_text(step: Step) -> str:
-    """Шаг значком для строки редактора: «↑5», «‖», «●3»."""
+    """Шаг значком для строки редактора: ↑5, ‖, ●3, ↑1.2с, »12."""
     symbol = _STEP_SYMBOLS[step.kind]
-    if step.kind == "color" or step.value != 1:
+    if step.seconds is not None:
+        return f"{symbol}{secs_text(step.seconds)}{tr('с', 's')}"
+    if step.kind in ("color", "speed") or step.value != 1:
         return f"{symbol}{step.value}"
     return symbol
 
@@ -369,14 +435,20 @@ class ProgramEditor:
         self._digit_run = ""
 
     def set_program(self, steps: list[Step], repeat: int, speed: int | None) -> None:
-        self.steps = [Step(s.kind, s.value) for s in steps]
+        self.steps = [Step(s.kind, s.value, s.seconds) for s in steps]
         self.repeat = max(1, min(99, int(repeat or 1)))
         if speed is not None:
             self.speed = max(SPEED_MIN, min(SPEED_MAX, int(speed)))
         self._capture = None
         self._digit_run = ""
 
+    def has_timed(self) -> bool:
+        """Есть ли в программе шаги макроса (с секундами или сменой скорости)."""
+        return steps_are_timed(self.steps)
+
     def _step_seconds(self, step: Step) -> float:
+        if step.seconds is not None:
+            return step.seconds      # макрос: точная длительность
         if step.kind in ("fwd", "back"):
             return step.value * self.step_time
         if step.kind in ("left", "right"):
@@ -402,20 +474,22 @@ class ProgramEditor:
             words = [f"…+{len(words) - 8}"] + words[-8:]
         n = len(self.steps)
         count = f"{n}/{self.max_steps} {steps_word(n)}" if self.max_steps else f"{n} {steps_word(n)}"
-        status = f"{count} · ~{self.estimate():.1f} {tr('с', 's')} · {tr('скор.', 'speed')} {self.speed}"
+        status = f"{count} · ~{secs_text(self.estimate())} {tr('с', 's')} · {tr('скор.', 'speed')} {self.speed}"
         if self.repeat > 1:
             status += f" · {tr('повтор', 'repeat')} {self.repeat}"
         return " · ".join(words) + f" ({status})"
 
     def serialize(self) -> str:
-        """Файл программы: просто и без лишних знаков («вперёд 5»)."""
+        """Файл программы: просто и без лишних знаков («вперёд 5», «вперёд 1.2с»)."""
         lines: list[str] = []
         if self.repeat > 1:
             lines.append(f"{tr('повтор', 'repeat')} {self.repeat}")
         lines.append(f"{tr('скорость', 'speed')} {self.speed}")
         for step in self.steps:
             word = _STEP_WORDS[step.kind][LANG]
-            if step.kind == "color" or step.value != 1:
+            if step.seconds is not None:
+                lines.append(f"{word} {secs_text(step.seconds)}{tr('с', 's')}")
+            elif step.kind in ("color", "speed") or step.value != 1:
                 lines.append(f"{word} {step.value}")
             else:
                 lines.append(word)
@@ -480,12 +554,21 @@ class ProgramEditor:
                 "a number applies to the last step; add one (w/a/s/d, space, b) "
                 "or use c + color digit",
             ))
+        if self.steps[-1].seconds is not None:
+            self._digit_run = ""
+            return EditorResult("warn", tr(
+                "этот шаг задан в секундах — число его не меняет "
+                "(уберите Backspace или добавьте новый шаг)",
+                "this step is set in seconds — a number does not change it "
+                "(remove it with Backspace or add a new step)",
+            ))
         self.steps[-1].value = max(1, min(99, value))
         return EditorResult("line", self.line())
 
     def _add_step(self, kind: str, now: float) -> EditorResult:
-        if self.steps and self.steps[-1].kind == kind:
-            self.steps[-1].value = min(99, self.steps[-1].value + 1)
+        last = self.steps[-1] if self.steps else None
+        if last is not None and last.kind == kind and last.seconds is None:
+            last.value = min(99, last.value + 1)
             return EditorResult("line", self.line())
         full = self._warn_if_full()
         if full is not None:
@@ -551,7 +634,9 @@ def parse_program(text: str, max_steps: int = 0):
     """Прощающий парсер файла: (шаги, повтор, скорость, ошибки).
 
     Понимает русский и английский, е/ё, регистр, «× x *», запятые,
-    значки действий (↑↓←→‖✦●); «#» — комментарий. Ошибки — строки с номером строки.
+    значки действий (↑↓←→‖✦●»); «#» — комментарий. Ошибки — строки с номером строки.
+    Число — это шаги, а «1.2с» / «1.2s» / «1.2сек» — секунды (шаг макроса);
+    «скорость N» в середине файла — смена скорости по ходу.
     """
     steps: list[Step] = []
     repeat = 1
@@ -561,23 +646,31 @@ def parse_program(text: str, max_steps: int = 0):
         if lineno == 1:
             raw = raw.lstrip("\ufeff")
         line = raw.split("#", 1)[0].lower().replace("ё", "е")
+        line = re.sub(r"(?<=\d),(?=\d)", ".", line)  # «1,2с» — десятичная запятая
         line = line.replace("×", " ").replace("*", " ").replace(",", " ")
         line = re.sub(r"x(?=\d)", " ", line)  # «вперёд x5» == «вперёд 5»
-        tokens = re.findall(r"[а-яa-z]+|\d+|[↑↓←→‖✦●]", line)
+        tokens = _TOKEN_RE.findall(line)
         i = 0
         while i < len(tokens):
             tok = tokens[i]
-            if tok.isdigit():
-                errors.append(tr(f"строка {lineno}: число {tok} без команды",
-                                 f"line {lineno}: number {tok} without a command"))
-                i += 1
-                continue
             kind = _STEP_SYNONYMS.get(tok)
             header = _HEADER_SYNONYMS.get(tok)
-            number: int | None = None
-            if i + 1 < len(tokens) and tokens[i + 1].isdigit():
-                number = int(tokens[i + 1])
+            if kind is None and header is None:
+                num, secs = split_number(tok)
+                if num is not None or secs is not None:
+                    errors.append(tr(f"строка {lineno}: число {tok} без команды",
+                                     f"line {lineno}: number {tok} without a command"))
+                else:
+                    errors.append(tr(f"строка {lineno}: не понимаю «{tok}»",
+                                     f"line {lineno}: don't understand «{tok}»"))
                 i += 1
+                continue
+            number: int | None = None
+            seconds: float | None = None
+            if i + 1 < len(tokens):
+                number, seconds = split_number(tokens[i + 1])
+                if number is not None or seconds is not None:
+                    i += 1
             i += 1
             if header == "repeat":
                 if number is None or not 1 <= number <= 99:
@@ -586,22 +679,41 @@ def parse_program(text: str, max_steps: int = 0):
                 else:
                     repeat = number
                 continue
-            if header == "speed":
+            if header == "speed" or kind == "speed":
                 if number is None or not 1 <= number <= SPEED_MAX:
                     errors.append(tr(f"строка {lineno}: «{tok}» требует число 1..{SPEED_MAX}",
                                      f"line {lineno}: «{tok}» needs a number 1..{SPEED_MAX}"))
+                elif steps:
+                    steps.append(Step("speed", number))  # смена скорости по ходу
                 else:
-                    speed = number
-                continue
-            if kind is None:
-                errors.append(tr(f"строка {lineno}: не понимаю «{tok}»",
-                                 f"line {lineno}: don't understand «{tok}»"))
+                    speed = number                       # скорость всей программы
                 continue
             if kind == "color":
+                if seconds is not None:
+                    errors.append(tr(f"строка {lineno}: «цвет» не бывает в секундах",
+                                     f"line {lineno}: «color» is not measured in seconds"))
+                    continue
                 if number is None or not 0 <= number <= 8:
                     errors.append(tr(f"строка {lineno}: «{tok}» требует число 0..8",
                                      f"line {lineno}: «{tok}» needs a number 0..8"))
                     continue
+            elif seconds is not None:
+                if kind == "blink":
+                    errors.append(tr(
+                        f"строка {lineno}: «мигнуть» не бывает в секундах",
+                        f"line {lineno}: «blink» is not measured in seconds",
+                    ))
+                    continue
+                if not MIN_STEP_SECONDS <= seconds <= MAX_STEP_SECONDS:
+                    errors.append(tr(
+                        f"строка {lineno}: «{tok} {secs_text(seconds)}с» — от "
+                        f"{secs_text(MIN_STEP_SECONDS)} до {secs_text(MAX_STEP_SECONDS)} с",
+                        f"line {lineno}: «{tok} {secs_text(seconds)}s» — from "
+                        f"{secs_text(MIN_STEP_SECONDS)} to {secs_text(MAX_STEP_SECONDS)} s",
+                    ))
+                    continue
+                steps.append(Step(kind, 1, round(seconds, STEP_PRECISION)))
+                continue
             else:
                 if number is None:
                     number = 1
@@ -616,6 +728,109 @@ def parse_program(text: str, max_steps: int = 0):
             f"the program has {len(steps)} steps, limit is {max_steps} (--max-steps)",
         ))
     return steps, repeat, speed, errors
+
+
+# --------------------------------------------------------------------------- #
+# Макрос: те же действия, что в программе, но с длительностями
+# --------------------------------------------------------------------------- #
+
+
+class MacroRecorder:
+    """Запись макроса: пульт зовёт recorder на каждое действие.
+
+    Движение пишется отрезками: пока робот едет, отрезок открыт, а на
+    остановке закрывается с точной длительностью («вперёд 1.2с»). Паузы
+    между действиями становятся «ожиданием», свет и мигание — обычными
+    шагами, смена скорости на ходу рвёт отрезок и попадает в макрос.
+    """
+
+    MIN_ACTION = 0.05  # 50 мс: короче — дребезг, а не действие
+    MIN_WAIT = 0.1     # паузы короче 100 мс не пишем: только шумят
+    PRECISION = 3      # до миллисекунд: у key-state точность ввода как раз ~1 мс
+
+    def __init__(self) -> None:
+        self.steps: list[Step] = []
+        self._speed = DEFAULT_SPEED
+        self._kind: str | None = None   # открытый отрезок движения
+        self._started = 0.0             # когда он начался
+        self._idle_since: float | None = None  # с какого момента стоим
+
+    def start(self, speed: int) -> None:
+        """Начать запись заново (текущая скорость — стартовая)."""
+        self.steps = []
+        self._speed = speed
+        self._kind = None
+        self._started = 0.0
+        self._idle_since = None
+
+    def move(self, kind: str | None, now: float, speed: int) -> None:
+        """Поехали (kind — fwd/back/left/right) или остановились (None)."""
+        was_moving = self._close(now)
+        if kind is None:
+            return
+        if not was_moving:
+            self._flush_wait(now)  # стояли — это ожидание
+        self._note_speed(speed)
+        self._kind = kind
+        self._started = now
+
+    def event(self, kind: str, value: int, now: float) -> None:
+        """Мгновенное действие (цвет, мигание): движение при этом не рвётся."""
+        moving = self._kind
+        if not self._close(now):
+            self._flush_wait(now)
+        self.steps.append(Step(kind, value))
+        if moving is not None:
+            self._kind = moving     # свет сменился на ходу — едем дальше
+            self._started = now
+            self._idle_since = None
+        else:
+            self._idle_since = now
+
+    def speed_changed(self, speed: int, now: float) -> None:
+        """Скорость поменяли на ходу: отрезок рвётся на этом месте."""
+        if self._kind is None or speed == self._speed:
+            return
+        moving = self._kind
+        self._close(now)
+        self.steps.append(Step("speed", speed))
+        self._speed = speed
+        self._kind = moving
+        self._started = now
+        self._idle_since = None
+
+    def stop(self, now: float) -> list[Step]:
+        """Остановить запись: отрезок закрывается, пауза в конце не пишется."""
+        self._close(now)
+        self._idle_since = None
+        return self.steps
+
+    # -- внутреннее ---------------------------------------------------------- #
+    def _note_speed(self, speed: int) -> None:
+        """Скорость меняли, пока стояли: шаг ставится перед движением."""
+        if speed != self._speed:
+            self.steps.append(Step("speed", speed))
+            self._speed = speed
+
+    def _close(self, now: float) -> bool:
+        """Закрыть отрезок движения; True — он был (и, может быть, записан)."""
+        if self._kind is None:
+            return False
+        kind, started = self._kind, self._started
+        self._kind = None
+        self._idle_since = now
+        duration = now - started
+        if duration >= self.MIN_ACTION:
+            self.steps.append(Step(kind, 1, round(duration, self.PRECISION)))
+        return True
+
+    def _flush_wait(self, now: float) -> None:
+        if self._idle_since is None:
+            return
+        duration = now - self._idle_since
+        self._idle_since = None
+        if duration >= self.MIN_WAIT:
+            self.steps.append(Step("pause", 1, round(duration, self.PRECISION)))
 
 
 # --------------------------------------------------------------------------- #
@@ -836,6 +1051,7 @@ class Tui:
         "robot": "36", "motor": "35", "test": "36", "led": "1;33",
         "speed": "1;36", "mode": "1;36", "help": "2;37", "prog": "1;34",
         "save": "34", "load": "34", "log": "2;37", "run": "1;35", "dbg": "2;37",
+        "rec": "1;31",
     }
 
     def __init__(self, remote: Remote) -> None:
@@ -955,6 +1171,9 @@ class Tui:
         else:
             parts.append(tr("программа", "program") if remote.mode == "editor"
                          else tr("прогон", "run"))
+        if remote.recording:
+            parts.append(tr(f"запись {len(remote.macro.steps)}",
+                            f"rec {len(remote.macro.steps)}"))
         if remote.key_state:
             parts.append("key-state")
         if remote.mode == "run" and remote._run_total:
@@ -967,6 +1186,13 @@ class Tui:
     def _program_line(self) -> str | None:
         """Строка программы: в редакторе — живая, иначе — что загружено."""
         remote = self.remote
+        if remote.recording:
+            steps = remote.macro.steps
+            if not steps:
+                return tr("[rec] … делайте что-нибудь (Enter — стоп)",
+                          "[rec] … do something (Enter — stop)")
+            text = " · ".join(step_text(step) for step in steps[-8:])
+            return f"[rec] {text} ({len(steps)} {steps_word(len(steps))})"
         if not remote.editor.steps:
             return None
         if remote.mode == "editor":
@@ -1013,6 +1239,7 @@ class Remote:
 
     CONNECT_TIMEOUT = 8.0  # сколько ждать прямой коннект по известному адресу
     SEND_DEBOUNCE = 0.06  # антидребезг команд движения, с
+    RUN_TICK = 0.02       # шаг проверки паузы/прерывания во время прогона, с
 
     def __init__(self, args: argparse.Namespace, profile, config: dict | None = None) -> None:
         cfg = config or {}
@@ -1084,6 +1311,9 @@ class Remote:
             pause_time=self.pause_time, blink_time=self.blink_time,
             max_steps=self.max_steps, speed=self.speed,
         )
+        self.macro = MacroRecorder()  # запись макроса (M … Enter)
+        self.recording = False
+        self._rec_shown = 0           # сколько шагов макроса уже показано в логе
         self._run_task: asyncio.Task | None = None
         self._run_paused = False
         self._run_abort: str | None = None  # remote | editor
@@ -1212,6 +1442,9 @@ class Remote:
         self.robot = None
         self.move = "stop"
         self.m3_dir = None
+        if self.recording:
+            self.macro.move(None, time.monotonic(), self.speed)  # закрыть отрезок
+            self._stop_recording()
         self._say("err", tr(
             f"потеряна связь с роботом ({exc}) — нажмите q, чтобы подключиться снова",
             f"lost connection to the robot ({exc}) — press q to reconnect",
@@ -1389,6 +1622,7 @@ class Remote:
         if self.mode == "run":
             self._run_abort = "remote"  # программа остановится
         await self._stop(tr("перед отключением", "disconnecting"))
+        self._stop_recording()  # макрос, если записывали, останется в пульте
         with contextlib.suppress(Exception):
             await self.robot.disconnect()
         self.robot = None
@@ -1435,6 +1669,9 @@ class Remote:
         if move == self.move:
             return  # автоповтор удержания: только продлеваем таймер
         self.move = move
+        if self.recording:
+            self.macro.move(move, self.last_input, self.speed)
+            self._show_recorded()
         self._schedule_send()
 
     async def _stop(self, reason: str) -> None:
@@ -1444,6 +1681,9 @@ class Remote:
             return
         self.move = "stop"
         self.m3_dir = None
+        if self.recording:
+            self.macro.move(None, time.monotonic(), self.speed)
+            self._show_recorded()
         if await self._call(self.robot.stop_all_motors):
             self._say("motor", tr(f"стоп ({reason})", f"stop ({reason})"))
 
@@ -1509,6 +1749,9 @@ class Remote:
         if await self._call(self.robot.all_leds, color):
             self.led_color = color
             self._say("led", tr(f"подсветка: {name}", f"light: {name}"))
+            number = NUMBER_BY_COLOR.get(color)
+            if number is not None:
+                self._rec_event("color", number)
 
     async def _led_blink(self) -> None:
         """B: мигнуть подсветкой, не меняя её состояние («выкл.» так и остаётся)."""
@@ -1523,6 +1766,7 @@ class Remote:
         await asyncio.sleep(self.blink_time)
         if await self._call(self.robot.all_leds, base):
             self._say("led", tr("подсветка мигнула", "the light blinked"))
+            self._rec_event("blink", 1)
 
     async def _on_m3(self, direction: Direction, label_ru: str, label_en: str) -> None:
         if not self._is_connected():
@@ -1666,6 +1910,10 @@ class Remote:
     def _apply_speed_if_moving(self) -> None:
         if self._is_connected() and self.move != "stop":
             self._schedule_send()  # применить новую скорость на ходу
+        if self.recording:
+            # смена скорости на ходу попадает в макрос (стоя — перед движением)
+            self.macro.speed_changed(self.speed, time.monotonic())
+            self._show_recorded()
 
     def _key_state_lost(self, reason: str) -> None:
         """Backend сломался на ходу: остановиться и вернуться к таймауту."""
@@ -1681,17 +1929,82 @@ class Remote:
         if self._is_connected() and self.move != "stop" and self._loop is not None:
             self._loop.create_task(self._stop(tr("key-state отключился", "key-state stopped")))
 
+    # -- запись макроса ------------------------------------------------------ #
+    async def _toggle_recording(self) -> None:
+        """M: начать запись макроса или закончить её."""
+        if self.recording:
+            self._stop_recording()
+            return
+        if self.mode != "remote":
+            self._say("warn", tr("запись макроса — только в пульте (Esc — назад)",
+                                 "macro recording works only in remote mode (Esc — back)"))
+            return
+        if not self._is_connected():
+            self._say("warn", tr("запись макроса: сначала подключитесь (q)",
+                                 "recording a macro: connect first (q)"))
+            return
+        self.macro.start(self.speed)
+        self.recording = True
+        self._rec_shown = 0
+        self._say("rec", tr(
+            "запись макроса: езда, свет, скорость — всё запишется, паузы станут "
+            "ожиданием; Enter или M — стоп",
+            "recording a macro: driving, light, speed are all recorded, pauses "
+            "become waits; Enter or M — stop",
+        ))
+
+    def _stop_recording(self) -> None:
+        """Закончить запись: макрос становится «последней программой» (R)."""
+        if not self.recording:
+            return
+        steps = self.macro.stop(time.monotonic())
+        self.recording = False
+        if not steps:
+            self._say("rec", tr("запись остановлена — ничего не записалось",
+                                "recording stopped — nothing was recorded"))
+            return
+        self.editor.set_program(steps, 1, self.speed)
+        self._draft_loaded = True
+        self.program_name = None  # это новый макрос, а не прежний файл
+        n = len(steps)
+        self._say("rec", tr(
+            f"макрос записан: {n} {steps_word(n)} · {secs_text(self.editor.estimate())} с — "
+            "R — повторить, f — сохранить, p — править",
+            f"macro recorded: {n} {steps_word(n)} · {secs_text(self.editor.estimate())} s — "
+            "R — replay, f — save, p — edit",
+        ))
+        self._say("prog", self.editor.line())
+
+    def _rec_event(self, kind: str, value: int) -> None:
+        """Свет/мигание во время записи — шаг макроса."""
+        if not self.recording:
+            return
+        self.macro.event(kind, value, time.monotonic())
+        self._show_recorded()
+
+    def _show_recorded(self) -> None:
+        """Показать в логе то, что уже записалось (живая лента записи)."""
+        steps = self.macro.steps
+        while self._rec_shown < len(steps):
+            self._say("rec", step_text(steps[self._rec_shown]))
+            self._rec_shown += 1
+
     def _keys_hint(self) -> str:
         """Короткая строка подсказок для текущего режима (баннер и TUI)."""
+        if self.recording:
+            return tr(
+                "запись макроса: ездите и светите как обычно · Enter или M — стоп",
+                "recording a macro: drive and light as usual · Enter or M — stop",
+            )
         if self.mode == "editor":
             return self._prog_hint()
         if self.mode == "run":
             return tr("пробел — пауза/продолжить · Esc — стоп · p — редактор программы",
                       "space — pause/resume · Esc — stop · p — program editor")
         return tr("q — подключиться · Shift+Q — отключиться · w/a/s/d — ехать · "
-                  "пробел — стоп · p — программа · h — все клавиши · Ctrl+C — выход",
+                  "пробел — стоп · p — программа · m — макрос · h — все клавиши · Ctrl+C — выход",
                   "q — connect · Shift+Q — disconnect · w/a/s/d — drive · "
-                  "space — stop · p — program · h — all keys · Ctrl+C — quit")
+                  "space — stop · p — program · m — macro · h — all keys · Ctrl+C — quit")
 
     def _print_lines(self, lines) -> None:
         """Напечатать готовые строки (справка): в TUI они идут в лог."""
@@ -1747,6 +2060,8 @@ class Remote:
                 "  b / B         blink the light (its color is kept)",
                 "  e / Shift+E   motor 3 (accessory): forward / back — toggle",
                 "  p             program mode: enter steps, run, files",
+                "  m             record a macro: press m, do anything, Enter — stop",
+                "                (actions are timed, pauses become waits)",
                 "  x             clear the program (stay in the current mode)",
                 "  R             run the last program (loaded or previous)",
                 "  F / G         save / load a program file",
@@ -1781,6 +2096,8 @@ class Remote:
                 "  b / B         мигнуть подсветкой (цвет не меняется)",
                 "  e / Shift+E   мотор 3 (аксессуар, если есть): вперёд / назад — тумблер",
                 "  p             режим программы: набор шагов, запуск, файлы",
+                "  m             записать макрос: нажмите m, делайте что угодно, Enter — стоп",
+                "                (действия записываются с секундами, паузы — как ожидание)",
                 "  x             очистить программу (режим не меняется)",
                 "  R             запустить последнюю программу (загруженную или прошлую)",
                 "  F / G         сохранить / загрузить программу файлом",
@@ -1811,6 +2128,8 @@ class Remote:
                 "  space         «pause» step (again — +1)",
                 "  c             «color» step: c, c, c — cycles; c3 — yellow directly",
                 "  b             «blink» step (again — +1)",
+                "  (macro)       timed steps: ↑1.2s — forward 1.2 s (1.2с, 1.2sec too);",
+                "                »8 — change the speed from here (a recorded macro)",
                 "  ] [ + - = _   speed; digits right after set it exactly: ]12",
                 "  r             program repeat +1 (r5 — exactly 5 times)",
                 "  Backspace     delete the last step",
@@ -1829,6 +2148,8 @@ class Remote:
                 "  пробел        шаг «пауза» (повтор — +1)",
                 "  c             шаг «цвет»: c, c, c — по кругу; c3 — сразу жёлтый",
                 "  b             шаг «мигнуть» (повтор — +1)",
+                "  (макрос)      шаги с секундами: ↑1.2с — вперёд 1.2 с (можно 1.2s, 1.2сек);",
+                "                »8 — сменить скорость с этого места (запись макроса)",
                 "  ] [ + - = _   скорость; цифры сразу после — точное значение: ]12",
                 "  r             повтор программы +1 (r5 — ровно 5 раз)",
                 "  Backspace     удалить последний шаг",
@@ -1897,6 +2218,13 @@ class Remote:
         if self.mode == "editor" and action in ("test", "identify", "m3_fwd", "m3_rev",
                                                 "hold", "latch", "blink_led"):
             return True
+        # Во время записи макроса программа, файлы и калибровка не трогаются:
+        # сначала надо остановить запись (Enter).
+        if self.recording and action in ("prog", "run_last", "save_prog", "load_prog",
+                                         "clear_prog", "test", "identify"):
+            self._say("rec", tr("идёт запись макроса — сначала Enter (стоп)",
+                                "a macro is being recorded — press Enter first"))
+            return True
         if action == "connect":
             await self._on_connect_key()
         elif action == "disconnect":
@@ -1927,6 +2255,8 @@ class Remote:
             self._on_latch(True)
         elif action == "prog":
             await self._on_prog_key()
+        elif action == "record_macro":
+            await self._toggle_recording()
         elif action == "run_last":
             await self._on_run_last()
         elif action == "save_prog":
@@ -2138,6 +2468,10 @@ class Remote:
         key = _to_latin_layout(item) if len(item) == 1 else item
         if key == "\x03":
             return False  # Ctrl+C
+        if self.recording and key == "enter":
+            await self._stop_if_moving(tr("запись макроса", "macro recording"))
+            self._stop_recording()
+            return True
         if self.mode == "editor" and await self._handle_editor_key(key):
             return True
         if self.mode == "run" and await self._handle_run_key(key):
@@ -2201,11 +2535,16 @@ class Remote:
             return
         await self._stop_if_moving(tr("сохранение программы", "saving the program"))
         stamp = time.strftime("%Y-%m-%d-%H%M")
-        default = self.program_name or tr(f"программа-{stamp}.txt",
-                                          f"program-{stamp}.txt")
+        default = self.program_name or self._default_file_name(stamp)
         self.prompt = {"kind": "save", "text": "", "default": default,
                        "title": f"{tr('имя файла', 'file name')} [{default}]"}
         self._prompt_write(f"[save] {tr('имя файла', 'file name')} [{default}]: ")
+
+    def _default_file_name(self, stamp: str) -> str:
+        """Имя по умолчанию: у макроса — «макрос-…», у программы — «программа-…»."""
+        if self.editor.has_timed():
+            return tr(f"макрос-{stamp}.txt", f"macro-{stamp}.txt")
+        return tr(f"программа-{stamp}.txt", f"program-{stamp}.txt")
 
     def _sanitize_name(self, name: str) -> str:
         name = name.strip().replace("/", "_").replace("\\", "_").replace("\x00", "")
@@ -2293,6 +2632,9 @@ class Remote:
             return tr("ошибка", "error")
         if not steps:
             return tr("пусто", "empty")
+        if steps_are_timed(steps):
+            return tr(f"макрос · {len(steps)} {steps_word(len(steps))}",
+                      f"macro · {len(steps)} {steps_word(len(steps))}")
         return f"{len(steps)} {steps_word(len(steps))}"
 
     async def _handle_prompt_key(self, item: str) -> bool:
@@ -2374,8 +2716,8 @@ class Remote:
             stamp = time.strftime("%Y-%m-%d %H:%M:%S")
             name = self.program_name or tr("(без имени)", "(unnamed)")
             line = (f"{stamp} · {name} · {steps} {steps_word(steps)} · "
-                    f"{tr('план', 'plan')} {planned:.1f} {tr('с', 's')} · "
-                    f"{tr('факт', 'actual')} {actual:.1f} {tr('с', 's')} · {result}")
+                    f"{tr('план', 'plan')} {planned:.2f} {tr('с', 's')} · "
+                    f"{tr('факт', 'actual')} {actual:.2f} {tr('с', 's')} · {result}")
             self.journal_path.parent.mkdir(parents=True, exist_ok=True)
             with self.journal_path.open("a", encoding="utf-8") as fh:
                 fh.write(line + "\n")
@@ -2427,36 +2769,44 @@ class Remote:
             raise _RunAbort
 
     async def _sleep_checked(self, duration: float) -> None:
-        remaining = duration
-        while remaining > 0:
+        """Пауза: срок по часам (без накопления ошибки), на паузе прогона время не идёт."""
+        left = duration
+        deadline = time.monotonic() + left
+        while left > 0:
             self._check_run()
             if self._run_paused:
-                await asyncio.sleep(0.05)
+                left = max(0.0, deadline - time.monotonic())
+                await asyncio.sleep(self.RUN_TICK)
+                deadline = time.monotonic() + left
                 continue
-            chunk = min(0.05, remaining)
-            await asyncio.sleep(chunk)
-            remaining -= chunk
+            left = deadline - time.monotonic()
+            if left > 0:
+                await asyncio.sleep(min(self.RUN_TICK, left))
 
     async def _run_motion(self, move: str, duration: float, speed: int) -> None:
+        """Ехать duration секунд: срок по часам, пауза время движения не тратит."""
+        left = duration
         sent = False
-        remaining = duration
+        deadline = 0.0
         try:
-            while remaining > 0:
+            while left > 0:
                 self._check_run()
                 if self._run_paused:
                     if sent:
                         await self._call(self.robot.stop_all_motors)
                         sent = False
-                    await asyncio.sleep(0.05)
+                        left = max(0.0, deadline - time.monotonic())
+                    await asyncio.sleep(self.RUN_TICK)
                     continue
                 if not sent:
                     if not await self._raw_drive(move, speed):
                         self._run_abort = "remote"
                         raise _RunAbort
                     sent = True
-                chunk = min(0.05, remaining)
-                await asyncio.sleep(chunk)
-                remaining -= chunk
+                    deadline = time.monotonic() + left
+                left = deadline - time.monotonic()
+                if left > 0:
+                    await asyncio.sleep(min(self.RUN_TICK, left))
         finally:
             if sent and self._is_connected():
                 await self._call(self.robot.stop_all_motors)
@@ -2472,7 +2822,7 @@ class Remote:
 
     async def _run_worker(self) -> None:
         started = time.monotonic()
-        steps = [Step(s.kind, s.value) for s in self.editor.steps]
+        steps = [Step(s.kind, s.value, s.seconds) for s in self.editor.steps]
         total = len(steps)
         repeat = max(1, self.editor.repeat)
         speed = self.editor.speed
@@ -2483,6 +2833,8 @@ class Remote:
         self._run_step = 0
         head = tr(f"старт: {total} {steps_word(total)} · скор. {speed}",
                   f"start: {total} {steps_word(total)} · speed {speed}")
+        if steps_are_timed(steps):
+            head += tr(" · макрос", " · macro")
         if repeat > 1:
             head += tr(f" · повтор {repeat}", f" · repeat {repeat}")
         self._say("run", head)
@@ -2499,7 +2851,7 @@ class Remote:
                               if repeat > 1 else "")
                     self._say("run", f"▶ {step_text(step)}{suffix}")
                     if step.kind == "color":
-                        run_led = Color(step.value)
+                        run_led = COLOR_BY_NUMBER.get(step.value, Color.OFF)
                         if not await self._call(self.robot.all_leds, run_led):
                             self._run_abort = "remote"
                             raise _RunAbort
@@ -2513,8 +2865,11 @@ class Remote:
                                 self._run_abort = "remote"
                                 raise _RunAbort
                             await self._sleep_checked(self.blink_time)
+                    elif step.kind == "speed":
+                        speed = max(SPEED_MIN, min(SPEED_MAX, step.value))
+                        self.speed = speed
                     elif step.kind == "pause":
-                        await self._sleep_checked(step.value * self.pause_time)
+                        await self._sleep_checked(self.editor._step_seconds(step))
                     else:
                         await self._run_motion(
                             step.kind, self.editor._step_seconds(step), speed
@@ -2533,8 +2888,8 @@ class Remote:
             self.speed = speed
             self.mode = "remote"
             self._say("run", tr(
-                f"готово: {total} {steps_word(total)} за {elapsed:.1f} с (план {planned:.1f} с)",
-                f"done: {total} {steps_word(total)} in {elapsed:.1f} s (planned {planned:.1f} s)",
+                f"готово: {total} {steps_word(total)} за {elapsed:.2f} с (план {planned:.2f} с)",
+                f"done: {total} {steps_word(total)} in {elapsed:.2f} s (planned {planned:.2f} s)",
             ))
             self._say("hint", tr("R — ещё раз · p — редактор", "R — run again · p — editor"))
             self._journal_write(tr("готово", "done"), total, planned, elapsed)
