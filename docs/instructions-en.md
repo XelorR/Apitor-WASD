@@ -218,9 +218,9 @@ game it is best to put the robot on charge.
 | `space` or `Esc` | STOP — the robot freezes instantly |
 | `]` `[` or `+` `-` | speed: 1 (very slow) … 12 (fast) |
 | `Shift` (hold) | boost: speed 12 while held, the old speed comes back after |
-| `k` or `l` | how to drive: “hold” or “cruise control” |
+| `j` or `k` | how to drive: “hold” or “cruise control” |
 
-There are two ways to drive, switched with `k` and `l`:
+There are two ways to drive, switched with `j` and `k`:
 
 * **hold**: the robot drives while the key is held down. Let go — it
   stops. This is the best way to learn and to park.
@@ -755,7 +755,8 @@ And when you stop the recording — how many steps you collected:
 
 1. Press `Esc` — the remote stops the robot. This is safe at any moment.
 2. Look at the last line in the window: it says what happened.
-3. Press `h` for help, `j` for the run journal, `q` to reconnect.
+3. Press `h` for help, `q` to reconnect. The run journal is switched
+   on with the `--log` flag (section 14).
 4. If nothing helps at all: `Ctrl+C` and start the remote again.
 
 **If the robot has driven far away.** Press `Esc` — the remote stops
@@ -915,7 +916,7 @@ factory settings: it recreates them on the next launch.
 * **Cache** — the saved robot address: that is why `q` finds it at once (section 3, page {{page:3}}).
 * **Frame** — a command the remote sends to the robot over Bluetooth (section 14, page {{page:14}}).
 * **Model** — which robot this is: R, J, S, Q, X or Wheels (section 1, page {{page:1}}).
-* **Journal** — the records of runs; the last lines are shown by `j` (section 14, page {{page:14}}).
+* **Journal** — the records of runs; switched on with `--log` (section 14, page {{page:14}}).
 * **The square** — the first real program: four turns (section 8, page {{page:8}}).
 * **The firefly** — a dance program: turns and coloured flashes (section 9, page {{page:9}}).
 * **Vocabulary** — every word a program file understands (section 11, page {{page:11}}).
@@ -941,7 +942,6 @@ factory settings: it recreates them on the next launch.
 | `1`…`8`, `0` | light colour, `0` turns it off |
 | `b` `B` | blink |
 | `v` `V` | motor 3: forward / backward (a switch) |
-| `k` `l` | hold / cruise control |
 | `p` `P` | program mode |
 | `Enter` | drive the program: the last macro or a file |
 | `Shift+Enter` | the same, but without pauses |
@@ -951,7 +951,7 @@ factory settings: it recreates them on the next launch.
 | `f` `g` | save / load a program file |
 | `e` `E` | program editor (works from the remote too) |
 | `y` `i` | test drive / motors one by one |
-| `j` | run journal |
+| `j` `k` | hold / cruise control |
 | `h` `?` | help |
 | `Ctrl+C` | quit |
 
@@ -992,8 +992,8 @@ is a comment.
 
 **If you forgot a key.** Press `h` — the remote shows the help.
 The `h` key works in program mode as well: there is a help of its
-own. And `j` shows the run journal: what the robot did and how long
-it took.
+own. And the run journal (the `--log` flag) shows what the robot did
+and how long it took.
 
 **A mini program to memorise** (a square with light):
 
@@ -1011,7 +1011,7 @@ and press `Enter`.
 **Three useful habits:**
 
 1. Before a run look at `[prog]`: how many steps and which speed.
-2. After a run press `j`: the journal shows how long it took.
+2. After a run look at the `[run]` line: it shows how long it took.
 3. Point the robot’s nose away from you: then `w` means “forward”.
 
 **Where to go next.** The `examples/` folder holds ready programs

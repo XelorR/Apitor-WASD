@@ -15,10 +15,12 @@ Single-file Python CLI remote for Apitor robots (R, J, S, Q, X, Wheels) over Blu
 
 ## Gotchas
 
-- Drive modes are user-facing names: `k` = hold (the robot drives while the key is
-  held), `l` = **cruise control** (drives on until `пробел`/another direction — the
+- Drive modes are user-facing names: `j` = hold (the robot drives while the key is
+  held), `k` = **cruise control** (drives on until `пробел`/another direction — the
   internal state is still `latched`, the flag is `--cruise` with a hidden `--latched`
-  alias, the TUI status says `круиз-контроль`/`cruise`).
+  alias, the TUI status says `круиз-контроль`/`cruise`). The run journal has **no
+  hotkey**: only `--log`/`--no-log`/`config.journal` (`_toggle_journal` is gone, `l`
+  is unassigned).
 - Key-state (reading real key press/release from `/dev/input/event*`) is always attempted on Linux and is the default hold behavior; it needs the `input` group (`sudo usermod -aG input "$USER"`, then re-log) or root, otherwise the app warns and falls back to auto-stop by `--hold-timeout`. `sudo` works but is not recommended: it creates root-owned state files in `~/.config/apitor-control/`. `--no-key-state` turns the tracking off entirely (no `/dev/input` access at all, no warning). `--key-state-device` restricts which devices are watched, and holding Shift boosts the speed to 12 in remote mode only (restored on release).
 - State lives in `~/.config/apitor-control/`: `addresses.json` (one cached Bluetooth address per model), `config.json` (lang, timings, journal), `runs.log`. Program files and the `_draft.txt` autosave live in `programs/` next to the script (overridable with `--program-dir` or `program_dir` in config). Flag priority: CLI flag → `config.json` → default.
 - With a cached address, `q` connects directly without scanning; `--no-cache` disables this. If the cached robot is off, the app falls back to scanning and updates the cache.

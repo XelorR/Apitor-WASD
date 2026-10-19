@@ -20,10 +20,9 @@
     r / R ........ проехать маршрут обратно задним ходом (R — без пауз)
     t / T ........ робота развернули рукой: проехать обратно передом
     F / G ........ сохранить / загрузить программу файлом
-    J ............ журнал прогонов вкл/выкл
     y ............ тест-поездка (проверить направления)
     i ............ моторы по одному (калибровка)
-    k / l ........ режим движения: удержание / круиз-контроль
+    j / k ........ режим движения: удержание / круиз-контроль
     h, ? ......... справка              Ctrl+C ....... выход
 
 Режим программы: нажмите `p` — набирайте шаги (w/a/s/d — вперёд/назад/
@@ -62,8 +61,8 @@ Shift) — то же самое, но без пауз: маршрут проез
 Режим по умолчанию — "удержание": движок крутится, пока клавиша повторяется
 (автоповтор операционной системы), и робот сам останавливается через
 --hold-timeout секунд после отпускания; короткое нажатие = толчок.
-Клавиши `k`/`l` выбирают режим движения (это не тумблер): `k` — удержание,
-как держать педаль газа; `l` — круиз-контроль, как в машине: один раз
+Клавиши `j`/`k` выбирают режим движения (это не тумблер): `j` — удержание,
+как держать педаль газа; `k` — круиз-контроль, как в машине: один раз
 нажали `w` — робот едет сам, руки свободны, а `пробел` — тормоз
 (останавливает, пока не поедете снова).
 
@@ -266,11 +265,10 @@ KEYMAP: dict[str, str] = {
     "t": "rev_front", "T": "rev_front_np",
     "f": "save_prog", "F": "save_prog",
     "g": "load_prog", "G": "load_prog",
-    "j": "journal", "J": "journal",
     "x": "clear_prog", "X": "clear_prog",
     "y": "test", "Y": "test",  # тест-поездка (переехала с t: t — обратный проезд)
     "i": "identify", "h": "help", "?": "help",
-    "k": "hold", "K": "hold", "l": "latch", "L": "latch",
+    "j": "hold", "J": "hold", "k": "latch", "K": "latch",  # режим движения
     "\x03": "quit",  # Ctrl+C (терминал в "сыром" режиме)
 }
 KEYMAP.update({key: f"color:{key}" for key in COLOR_BY_KEY})
@@ -2365,10 +2363,9 @@ class Remote:
                 "  t / T         the robot was turned around by hand: t — drive it",
                 "                back, T — the same without pauses",
                 "  F / G         save / load a program file",
-                "  J             toggle the run journal",
                 "  y             test drive: forward, back, left, right",
                 "  i             spin motors 1, 2, 3 one by one (calibration)",
-                "  k / l         mode: hold / cruise control",
+                "  j / k         mode: hold / cruise control",
                 "  h, ?          this help              Ctrl+C — quit",
                 "",
                 "calibration (if the robot drives the wrong way), at launch:",
@@ -2409,10 +2406,9 @@ class Remote:
                 "  t / T         робота развернули рукой: t — проехать обратно передом,",
                 "                T — то же самое, но без пауз",
                 "  F / G         сохранить / загрузить программу файлом",
-                "  J             журнал прогонов вкл/выкл",
                 "  y             тест-поездка: вперёд, назад, влево, вправо",
                 "  i             крутить моторы 1, 2, 3 по очереди (калибровка)",
-                "  k / l         режим движения: удержание / круиз-контроль",
+                "  j / k         режим движения: удержание / круиз-контроль",
                 "  h, ?          эта справка            Ctrl+C — выход",
                 "",
                 "калибровка (если робот едет не туда), указывается при запуске:",
@@ -2525,8 +2521,8 @@ class Remote:
         if action == "quit":
             return False
         # В режиме выполнения программа сама управляет роботом: клавиши-пульта,
-        # кроме подключения/отключения/журнала/справки, молчат.
-        if self.mode == "run" and action not in ("connect", "disconnect", "journal", "help"):
+        # кроме подключения/отключения/справки, молчат.
+        if self.mode == "run" and action not in ("connect", "disconnect", "help"):
             return True
         # В редакторе калибровка и мотор 3 не работают (чтобы не дёрнуть робота).
         if self.mode == "editor" and action in ("test", "identify", "m3_fwd", "m3_rev",
@@ -2584,8 +2580,6 @@ class Remote:
             await self._open_save_prompt()
         elif action == "load_prog":
             await self._open_load_prompt()
-        elif action == "journal":
-            self._toggle_journal()
         elif action == "clear_prog":
             self._on_clear_prog()
         elif action == "test":
@@ -3032,12 +3026,6 @@ class Remote:
         return True
 
     # -- журнал и черновик ---------------------------------------------------- #
-    def _toggle_journal(self) -> None:
-        self.journal = not self.journal
-        state = tr("включён", "on") if self.journal else tr("выключен", "off")
-        self._say("log", tr(f"журнал {state}: {self.journal_path}",
-                            f"journal {state}: {self.journal_path}"))
-
     def _journal_write(self, result: str, steps: int, planned: float, actual: float) -> None:
         if not self.journal:
             return
@@ -3793,8 +3781,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help=tr("максимум команд в программе (0 — без ограничения)",
                                 "maximum program steps (0 — unlimited)"))
     parser.add_argument("--log", dest="log", action="store_true", default=None,
-                        help=tr("вести журнал прогонов (~/.config/apitor-control/runs.log)",
-                                "keep a run journal (~/.config/apitor-control/runs.log)"))
+                        help=tr("вести журнал прогонов (~/.config/apitor-control/runs.log; хоткея нет)",
+                                "keep a run journal (~/.config/apitor-control/runs.log; no hotkey)"))
     parser.add_argument("--no-log", dest="log", action="store_false",
                         help=tr("не вести журнал (даже если включён в config.json)",
                                 "no journal (even if enabled in config.json)"))

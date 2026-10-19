@@ -4,14 +4,16 @@
 
 Из соседних наборов сюда не дублируется ничего: здесь то, что раньше не
 проверялось вовсе — --cruise (прежнее имя --latched), коды выхода 2/130,
-запоминание языка в config.json, --flip-left, i (моторы) и правило
-«каждая клавиша описана во всех документах».
+запоминание языка в config.json, --flip-left, i (моторы), журнал прогонов
+(только флаг --log, хоткея нет) и правило «каждая клавиша описана во всех
+документах».
 """
 import fcntl
 import importlib.util
 import json
 import os
 import pty
+import re
 import select
 import shutil
 import signal
@@ -223,15 +225,49 @@ quit_app(proc, master)
 new_files = {n for n in set(os.listdir(PROGDIR)) - before if n.endswith(".txt")}
 check("файл сохранён в папку из config.json", bool(new_files), os.listdir(PROGDIR))
 
+# ── журнал: включается только флагом, хоткея нет ───────────────────────────── #
+help_full = run(["--help"]).stdout
+check("в справке нет хоткея журнала",
+      not re.search(r"^\s+J\s{2,}\S", help_full, re.M),
+      [ln for ln in help_full.splitlines() if ln.strip().startswith("J")])
+check("в справке есть флаг --log", "--log" in help_full)
+
+logfile = os.path.join(FAKEHOME, ".config", "apitor-control", "runs.log")
+if os.path.exists(logfile):
+    os.remove(logfile)
+
+
+def run_program(extra=()):
+    """Прогнать программу из одного шага; вернуть вывод на нажатие j."""
+    proc, master, take, key = pty_app(extra, wait=1.0)
+    key("q")
+    out = key("j")            # раньше здесь был журнал, теперь — режим удержания
+    key("p")
+    key("w")
+    key("enter", 2.4)
+    quit_app(proc, master)
+    return out
+
+
+out = run_program()
+check("без --log журнал не пишется", not os.path.exists(logfile), out)
+check("j переключает удержание, а не журнал",
+      "удержание" in out and "журнал" not in out.lower(), out)
+
+out = run_program(["--log"])
+check("--log: прогон попал в журнал", os.path.exists(logfile), out)
+log_text = open(logfile, encoding="utf-8").read() if os.path.exists(logfile) else ""
+check("в журнале строка о прогоне", "план" in log_text and "готово" in log_text, log_text)
+
 # ── правило проекта: клавиши описаны во всех документах ────────────────────── #
 RU_KEYS = ["`q`", "`Shift+Q`", "`w`", "`a`", "`s`", "`d`", "`пробел`", "`Esc`",
            "`Enter`", "`Shift+Enter`", "`r`", "`t`", "`R`", "`T`", "`m`", "`n`",
-           "`y`", "`i`", "`k`", "`l`", "`b`", "`B`", "`c`", "`*`", "`v`", "`V`",
-           "`e`", "`E`", "`f`", "`g`", "`x`", "`p`", "`j`", "`h`", "`Ctrl+C`"]
+           "`y`", "`i`", "`j`", "`k`", "`b`", "`B`", "`c`", "`*`", "`v`", "`V`",
+           "`e`", "`E`", "`f`", "`g`", "`x`", "`p`", "`h`", "`Ctrl+C`"]
 EN_KEYS = ["`q`", "`Shift+Q`", "`w`", "`a`", "`s`", "`d`", "`space`", "`Esc`",
            "`Enter`", "`Shift+Enter`", "`r`", "`t`", "`R`", "`T`", "`m`", "`n`",
-           "`y`", "`i`", "`k`", "`l`", "`b`", "`B`", "`c`", "`*`", "`v`", "`V`",
-           "`e`", "`E`", "`f`", "`g`", "`x`", "`p`", "`j`", "`h`", "`Ctrl+C`"]
+           "`y`", "`i`", "`j`", "`k`", "`b`", "`B`", "`c`", "`*`", "`v`", "`V`",
+           "`e`", "`E`", "`f`", "`g`", "`x`", "`p`", "`h`", "`Ctrl+C`"]
 
 for name, keys in (("README.md", RU_KEYS),
                    ("docs/instructions-ru.md", RU_KEYS),
@@ -240,10 +276,12 @@ for name, keys in (("README.md", RU_KEYS),
     missing = [k for k in keys if k not in text]
     check(f"{name}: все клавиши описаны", not missing, missing)
 
-# флаг --cruise тоже должен быть во всех трёх
+# флаг --cruise описан во всех трёх, а освободившаяся клавиша l — нигде
 for name in ("README.md", "docs/instructions-ru.md", "docs/instructions-en.md"):
     text = open(os.path.join(ROOT, name), encoding="utf-8").read()
     check(f"{name}: описан --cruise", "--cruise" in text)
+    check(f"{name}: клавиша l нигде не рекламируется", "`l`" not in text,
+          [ln for ln in text.splitlines() if "`l`" in ln][:2])
 
 print()
 print("ОШИБОК:", failures)
