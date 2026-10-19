@@ -689,7 +689,7 @@ All four keys side by side:
 | `t` | the same, but forward — for a robot you turned by hand |
 | `R` `T` | the same without pauses, in one go |
 
-In the log you can see it in the `[run]` lines:
+In the remote window you can see it in the `[run]` lines:
 
 ```
 [run] start: 9 steps · speed 6 · reversed (driving backwards)
@@ -818,7 +818,7 @@ Useful flags (the full list is in the README):
 |---|---|
 | `--speed 6` | starting speed 1…12 |
 | `--product r` | robot model: `r`, `j`, `s`, `q`, `x`, `w` |
-| `--tui` | full-screen interface with a banner and the journal |
+| `--tui` | full-screen interface with a banner and a message log |
 | `--no-cache` | do not use the saved robot address |
 | `--simulate` | no robot: print the frames that would be sent |
 | `--cruise` | start with cruise control on (the old name `--latched` still works) |

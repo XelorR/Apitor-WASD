@@ -2071,7 +2071,7 @@ class Remote:
             self._schedule_send()  # применить новую скорость на ходу
 
     def _on_latch(self, latched: bool) -> None:
-        """k/l: режим движения — удержание (k) или круиз-контроль (l)."""
+        """j/k: режим движения — удержание (j) или круиз-контроль (k)."""
         self.latched = latched
         if self.latched:
             self._say("mode", tr(
