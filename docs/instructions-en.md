@@ -688,6 +688,7 @@ All four keys side by side:
 | `r` | drives the route back, backwards |
 | `t` | the same, but forward — for a robot you turned by hand |
 | `R` `T` | the same without pauses, in one go |
+| `space`, then `r` / `t` | drive back only the part already done |
 
 In the remote window you can see it in the `[run]` lines:
 
@@ -729,6 +730,76 @@ And when you stop the recording — how many steps you collected:
   different order.
 * A long trip: write `speed 12` in the middle of the file — on the
   way back the robot drives fast first and comes home slowly.
+* A return halfway: start the “long trip” and press `space` when the
+  robot has driven only part of the route, then `r` — it comes home
+  the short way, only over what was done.
+
+## The robot went the wrong way: drive back what was done
+
+Sometimes the robot goes the wrong way. You do not have to wait for the
+end of the program: pause the run (`space`) and press `r` or `t` — the
+robot drives back **only along the part of the route it has already
+driven**. This is the quickest way to bring it back.
+
+If the pause caught the robot in the middle of a long step, it drives
+back exactly as many seconds as it managed to drive. The program
+“forward 20s”, paused at the 16th second — the way back starts with
+“back 16s”, and then come the steps already driven, in reverse order.
+Everything else is like a usual way back: the turns are mirrored, the
+pauses and the light stay in place, and `R` and `T` — without pauses.
+The program itself does not change: `Enter` after the return drives it
+forward again.
+
+```
+[run] paused at step 1 of 1 — driving back what was done
+[run] start: 1 step · speed 6 · reversed: the part already done (driving backwards)
+[run] ▶ ↓16s
+```
+
+Without a pause `r` and `t` do nothing during a run: the remote hints
+that you should press `space` first.
+
+<div class="tip">
+A pause spoils nothing: press `space` again and the robot calmly drives
+on from the same place. `r` or `t` end the run and start the way back.
+So while paused you have a choice: drive on or come home.
+</div>
+
+If the program repeated, the way back runs over everything driven:
+the whole first pass and the part of the second one the robot managed
+to drive. It comes back to where the program started — the same place
+a full way back ends at.
+
+<div class="mission">
+**Challenge “Stop, wrong way!”.** Start a long program and press
+`space` when the robot has driven only part of the route. Then press
+`r` — and look at the `[run]` lines: the number of seconds it drove
+back is exactly how far it had got.
+</div>
+
+What goes into the way back:
+
+| What was there | What happens on the way back |
+|---|---|
+| a step already driven | mirrored: `forward` ↔ `backward`, `left` ↔ `right` (with `t` only the turns mirror) |
+| a long step in flight | a stretch in seconds: as far as it got |
+| a pause already passed | a pause, as in a full way back (with `R` and `T` — without pauses) |
+| a blink | a blink |
+| light and speed | they switch where you changed them |
+
+The run journal (`--log`) gets both lines: where you paused and that
+the robot came back.
+
+**The rest of the program is not driven.** After the return the run is
+over: the robot stands where it started. Want the whole program —
+press `Enter` and it drives from the very beginning (the steps never
+change).
+
+<div class="tip">
+The return is a normal run: every step of it shows in the `[run]`
+lines, and `space` pauses it again. The light after the return is
+the one that was on before the run.
+</div>
 
 # 13. If something is wrong
 
@@ -740,6 +811,7 @@ And when you stop the recording — how many steps you collected:
 | The keys do nothing | the remote listens to the keyboard only while its window is active; press `h` for a hint. Do not type `w a s d` in other windows |
 | `Enter` does not start the program | look at the `[prog]` line: `0 steps` means the program is empty |
 | The robot stopped in the middle of a program | `space` was pressed (pause) — press it again |
+| The robot went the wrong way | `space`, then `r` (or `t`) — the robot drives back only the part already done |
 | Everything is frozen | `Ctrl+C`: the remote stops the motors and quits |
 | Not sure what to press | `h` — help; `Esc` — back to the remote |
 | `[err] the program was not changed` | there is a typo in the file: press `e` and look |
@@ -961,9 +1033,11 @@ factory settings: it recreates them on the next launch.
 `Enter` — start (with `Shift` — without pauses) · `Esc` — to the remote.
 **The way back:** `r` `t` — backwards / turned around, `R` `T` — the
 same without pauses; works from the remote and from the editor.
+On a paused run — only the part already done.
 
 **Run:** `space` — pause/resume · `Esc` — stop · `p` — edit.
-After a run: `Enter` — once more, `r` `t` — back.
+When paused: `r` `t` — drive back what was done. After a run:
+`Enter` — once more, `r` `t` — back.
 
 A mini example (the square) as a file `programs/square.txt`:
 

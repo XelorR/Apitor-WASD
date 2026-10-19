@@ -19,6 +19,7 @@
     n ............ закончить запись макроса (то же, что Esc)
     r / R ........ проехать маршрут обратно задним ходом (R — без пауз)
     t / T ........ робота развернули рукой: проехать обратно передом
+                   (на паузе прогона r/t везут обратно только проеханную часть)
     F / G ........ сохранить / загрузить программу файлом
     y ............ тест-поездка (проверить направления)
     i ............ моторы по одному (калибровка)
@@ -420,11 +421,15 @@ REVERSE_MIRROR = {
 
 
 def reversed_steps(editor, mode: str, *, drop_pauses: bool = False,
-                   base_light: int | None = None) -> list[Step]:
+                   base_light: int | None = None,
+                   steps: list[Step] | None = None) -> list[Step]:
     """Программа обратного проезда: те же участки пути в обратном порядке.
 
     Длительности каждого действия сохраняются (шаги с числом превращаются в
     секунды), паузы тоже — если не попросили обратное (drop_pauses).
+
+    steps — готовый маршрут вместо editor.steps: частичный реверс
+    (partial_reverse_steps) собирает так только проеханную часть.
 
     Свет и скорость ставятся там, где они менялись, а не там, где стояли в
     исходной программе. Например «скорость 6, вперёд, вправо, скорость 12,
@@ -441,7 +446,7 @@ def reversed_steps(editor, mode: str, *, drop_pauses: bool = False,
     route: list[tuple[Step, float, int | None, int]] = []
     light: int | None = None
     speed = editor.speed
-    for step in editor.steps:
+    for step in (editor.steps if steps is None else steps):
         if step.kind == "color":
             light = step.value          # свет горит до следующей смены
             continue
@@ -470,6 +475,33 @@ def reversed_steps(editor, mode: str, *, drop_pauses: bool = False,
     return out
 
 
+def partial_reverse_steps(done: list[Step], editor, mode: str, *,
+                          current: Step | None = None, used: float = 0.0,
+                          drop_pauses: bool = False,
+                          base_light: int | None = None) -> list[Step]:
+    """Реверс только проеханной части: вернуть робота туда, где он был.
+
+    done — шаги, проеханные полностью; current/used — шаг, на котором
+    нажали паузу, и сколько секунд его уже проехали. Текущий шаг попадает
+    в маршрут как отрезок «столько-то секунд» (только движения и только
+    если проехали хотя бы MIN_STEP_SECONDS): «вперёд 20с», пауза на 16-й
+    секунде → обратный маршрут начнётся с «назад 16с».
+
+    Пауза, мигание, свет и скорость робота не двигают: их недоделанные
+    шаги в маршрут не попадают, а полностью проеханные остаются — по тем
+    же правилам, что и у полного реверса (свет и скорость в точках смены).
+    """
+    prefix = [Step(s.kind, s.value, s.seconds) for s in done]
+    if current is not None and current.kind in MOVE_VECTORS:
+        seconds = min(max(used, 0.0), editor._step_seconds(current),
+                      MAX_STEP_SECONDS)
+        if seconds >= MIN_STEP_SECONDS:
+            prefix.append(Step(current.kind, 1,
+                               round(seconds, STEP_PRECISION)))
+    return reversed_steps(editor, mode, drop_pauses=drop_pauses,
+                          base_light=base_light, steps=prefix)
+
+
 class EditorResult:
     """Ответ редактора на клавишу: что напечатать или что сделать."""
     __slots__ = ("action", "text")
@@ -487,17 +519,20 @@ class RunPlan:
     """Что запускаем: готовые шаги, скорость, повтор и вид прогона.
 
     rev — None (обычный прогон), "back" (обратно задним ходом) или "front"
-    (робота развернули рукой); drop_pauses — прогон без пауз.
+    (робота развернули рукой); drop_pauses — прогон без пауз;
+    partial — реверс только проеханной части (r/t на паузе).
     """
-    __slots__ = ("steps", "speed", "repeat", "rev", "drop_pauses")
+    __slots__ = ("steps", "speed", "repeat", "rev", "drop_pauses", "partial")
 
     def __init__(self, steps: list[Step], speed: int, repeat: int,
-                 rev: str | None = None, drop_pauses: bool = False) -> None:
+                 rev: str | None = None, drop_pauses: bool = False,
+                 partial: bool = False) -> None:
         self.steps = steps
         self.speed = speed
         self.repeat = repeat
         self.rev = rev
         self.drop_pauses = drop_pauses
+        self.partial = partial
 
 
 class ProgramEditor:
@@ -1588,9 +1623,13 @@ class Remote:
         self._run_task: asyncio.Task | None = None
         self._run_plan: RunPlan | None = None  # что именно запущено (шаги, повтор, вид)
         self._run_paused = False
-        self._run_abort: str | None = None  # remote | editor
+        self._run_abort: str | None = None  # remote | editor | partial
         self._run_step = 0
         self._run_total = 0
+        self._run_done: list[Step] = []        # шаги, проеханные полностью
+        self._run_current: Step | None = None  # шаг, на котором стоим сейчас
+        self._run_progress = 0.0               # сколько секунд его проехали
+        self._run_led = Color.WHITE            # подсветка во время прогона
         self._external_editor = threading.Event()  # внешний редактор владеет клавиатурой
         self._reader_paused = threading.Event()    # поток ввода подтвердил паузу
         self._termios_original = None              # терминал до "сырого" режима
@@ -2288,8 +2327,10 @@ class Remote:
         if self.mode == "editor":
             return self._prog_hint()
         if self.mode == "run":
-            return tr("пробел — пауза/продолжить · Esc — стоп · p — редактор программы",
-                      "space — pause/resume · Esc — stop · p — program editor")
+            return tr("пробел — пауза/продолжить · на паузе r/t — обратно по проеханному · "
+                      "Esc — стоп · p — редактор программы",
+                      "space — pause/resume · r/t when paused — drive back what was done · "
+                      "Esc — stop · p — program editor")
         return tr("q — подключиться · Shift+Q — отключиться · w/a/s/d — ехать · "
                   "Enter — пуск · пробел — стоп · m — макрос · p — программа · "
                   "r/t — обратно · h — все клавиши · Ctrl+C — выход",
@@ -2362,6 +2403,7 @@ class Remote:
                 "                R — the same without pauses",
                 "  t / T         the robot was turned around by hand: t — drive it",
                 "                back, T — the same without pauses",
+                "                on a paused run r/t drive back only what was done",
                 "  F / G         save / load a program file",
                 "  y             test drive: forward, back, left, right",
                 "  i             spin motors 1, 2, 3 one by one (calibration)",
@@ -2405,6 +2447,7 @@ class Remote:
                 "                R — то же самое, но без пауз",
                 "  t / T         робота развернули рукой: t — проехать обратно передом,",
                 "                T — то же самое, но без пауз",
+                "                на паузе прогона r/t везут обратно только проеханное",
                 "  F / G         сохранить / загрузить программу файлом",
                 "  y             тест-поездка: вперёд, назад, влево, вправо",
                 "  i             крутить моторы 1, 2, 3 по очереди (калибровка)",
@@ -2477,6 +2520,8 @@ class Remote:
         if LANG == "en":
             lines = (
                 "  space         pause / resume",
+                "  r / R / t / T paused: drive back only what was done",
+                "                (capitals — the same without pauses)",
                 "  Esc           abort (back to remote)",
                 "  p             abort and switch to program mode",
                 "  Shift+Q       disconnect (the program stops)",
@@ -2485,6 +2530,8 @@ class Remote:
         else:
             lines = (
                 "  пробел        пауза / продолжить",
+                "  r / R / t / T на паузе: обратно только по проеханному",
+                "                (заглавные — то же самое, но без пауз)",
                 "  Esc           прервать (вернуться в пульт)",
                 "  p             прервать и перейти в режим программы",
                 "  Shift+Q       отключиться (программа остановится)",
@@ -2828,8 +2875,14 @@ class Remote:
     async def _handle_run_key(self, key: str) -> bool:
         if key == " ":
             self._run_paused = not self._run_paused
-            self._say("run", tr("пауза", "paused") if self._run_paused
-                      else tr("продолжаю", "resuming"))
+            if self._run_paused:
+                self._say("run", tr("пауза", "paused"))
+                self._say("hint", tr(
+                    "пробел — продолжить · r/t — обратно по проеханному · Esc — стоп",
+                    "space — resume · r/t — drive back what was done · Esc — stop",
+                ))
+            else:
+                self._say("run", tr("продолжаю", "resuming"))
             return True
         if key == "esc":
             self._run_abort = "remote"  # Esc: прервать и вернуться в пульт
@@ -2837,7 +2890,56 @@ class Remote:
         if key == "p":
             self._run_abort = "editor"  # P: прервать и перейти в режим программы
             return True
+        if key in ("r", "R", "t", "T"):
+            await self._partial_reverse(key)
+            return True
         return False
+
+    async def _partial_reverse(self, key: str) -> None:
+        """r/t на паузе: вернуть робота по уже проеханной части программы."""
+        if not self._run_paused:
+            self._say("hint", tr(
+                "обратно по проеханному — сначала пауза (пробел), потом r или t",
+                "to drive back what was done, pause first (space), then r or t",
+            ))
+            return
+        mode = "back" if key in ("r", "R") else "front"
+        drop_pauses = key.isupper()
+        steps = partial_reverse_steps(
+            self._run_done, self.editor, mode,
+            current=self._run_current, used=self._run_progress,
+            drop_pauses=drop_pauses,
+            base_light=NUMBER_BY_COLOR.get(self._run_led),
+        )
+        if not any(step.kind in MOVE_VECTORS for step in steps):
+            self._say("warn", tr(
+                "возвращаться некуда: робот ещё не проехал ни одного движения",
+                "nothing to drive back: the robot has not moved yet",
+            ))
+            return
+        # Останавливаем текущий прогон и запускаем встречный по проеханному.
+        self._run_abort = "partial"
+        task = self._run_task
+        if task is not None:
+            try:
+                await asyncio.wait_for(task, 3.0)
+            except asyncio.TimeoutError:
+                # Прогон не отозвался (зависший вызов BLE): снимаем его, чтобы
+                # пульт не остался в режиме прогона навсегда.
+                self._run_task = None
+                self._run_plan = None
+                self._run_abort = None
+                self._run_paused = False
+                self.mode = "remote"
+                self._say("warn", tr(
+                    "прогон не остановился — сброшен; проверьте робота",
+                    "the run did not stop — it was reset; check the robot",
+                ))
+                return
+            except Exception:  # noqa: BLE001 — прогон уже завершился сам
+                pass
+        self._launch_run(RunPlan(steps, self.editor.speed, 1, mode,
+                                 drop_pauses=drop_pauses, partial=True))
 
     # -- файлы программы ------------------------------------------------------ #
     def _prompt_write(self, text: str) -> None:
@@ -3119,12 +3221,16 @@ class Remote:
                 self._say("warn", tr("в программе одни паузы — ехать некуда",
                                      "the program is all pauses — nothing to drive"))
                 return
-        self._run_plan = RunPlan(
+        self._launch_run(RunPlan(
             steps, self.editor.speed,
             1 if rev is not None else max(1, self.editor.repeat),
             rev, drop_pauses,
-        )
-        self.speed = self.editor.speed
+        ))
+
+    def _launch_run(self, plan: RunPlan) -> None:
+        """Запустить готовый план: прогон, реверс или его проеханную часть."""
+        self._run_plan = plan
+        self.speed = plan.speed
         self._run_paused = False
         self._run_abort = None
         self.mode = "run"
@@ -3143,6 +3249,7 @@ class Remote:
         deadline = time.monotonic() + left
         while left > 0:
             self._check_run()
+            self._run_progress = duration - left  # для реверса проеханного
             if self._run_paused:
                 left = max(0.0, deadline - time.monotonic())
                 await asyncio.sleep(self.RUN_TICK)
@@ -3160,6 +3267,7 @@ class Remote:
         try:
             while left > 0:
                 self._check_run()
+                self._run_progress = duration - left  # для реверса проеханного
                 if self._run_paused:
                     if sent:
                         await self._call(self.robot.stop_all_motors)
@@ -3201,12 +3309,24 @@ class Remote:
         run_led = self.led_color
         self._run_total = total
         self._run_step = 0
+        self._run_done = []
+        self._run_current = None
+        self._run_progress = 0.0
+        self._run_led = run_led
         head = tr(f"старт: {total} {steps_word(total)} · скор. {speed}",
                   f"start: {total} {steps_word(total)} · speed {speed}")
         if plan.rev == "back":
-            head += tr(" · реверс задним ходом", " · reversed (driving backwards)")
+            if plan.partial:
+                head += tr(" · реверс проеханной части (задним ходом)",
+                           " · reversed: the part already done (driving backwards)")
+            else:
+                head += tr(" · реверс задним ходом", " · reversed (driving backwards)")
         elif plan.rev == "front":
-            head += tr(" · реверс передом (робот развёрнут)", " · reversed (robot turned around)")
+            if plan.partial:
+                head += tr(" · реверс проеханной части (робот развёрнут)",
+                           " · reversed: the part already done (robot turned around)")
+            else:
+                head += tr(" · реверс передом (робот развёрнут)", " · reversed (robot turned around)")
         elif steps_are_timed(steps):
             head += tr(" · макрос", " · macro")
         if plan.drop_pauses:
@@ -3214,8 +3334,9 @@ class Remote:
         if repeat > 1:
             head += tr(f" · повтор {repeat}", f" · repeat {repeat}")
         self._say("run", head)
-        self._say("hint", tr("пробел — пауза/продолжить, Esc — стоп",
-                             "space — pause/resume, Esc — stop"))
+        self._say("hint", tr(
+            "пробел — пауза/продолжить, на паузе r/t — обратно по проеханному, Esc — стоп",
+            "space — pause/resume, r/t when paused — drive back what was done, Esc — stop"))
         await self._led_flash(Color.GREEN, 0.35, run_led)
         finished = False
         try:
@@ -3226,8 +3347,11 @@ class Remote:
                     suffix = (tr(f" · повтор {rep}/{repeat}", f" · repeat {rep}/{repeat}")
                               if repeat > 1 else "")
                     self._say("run", f"▶ {step_text(step)}{suffix}")
+                    self._run_current = step
+                    self._run_progress = 0.0
                     if step.kind == "color":
                         run_led = COLOR_BY_NUMBER.get(step.value, Color.OFF)
+                        self._run_led = run_led
                         if not await self._call(self.robot.all_leds, run_led):
                             self._run_abort = "remote"
                             raise _RunAbort
@@ -3250,6 +3374,9 @@ class Remote:
                         await self._run_motion(
                             step.kind, self.editor._step_seconds(step), speed
                         )
+                    self._run_done.append(step)
+                    self._run_current = None
+                    self._run_progress = 0.0
             finished = True
         except _RunAbort:
             pass
@@ -3281,17 +3408,25 @@ class Remote:
                     f"aborted at step {self._run_step} of {total} — program mode",
                 ))
                 self._say("prog", self.editor.line())
+                result = tr(f"прервано на шаге {self._run_step}/{total}",
+                            f"aborted at step {self._run_step}/{total}")
+            elif self._run_abort == "partial":
+                self.mode = "remote"
+                self._say("run", tr(
+                    f"пауза на шаге {self._run_step} из {total} — везу обратно по проеханному",
+                    f"paused at step {self._run_step} of {total} — driving back what was done",
+                ))
+                result = tr(f"пауза на шаге {self._run_step}/{total}",
+                            f"paused at step {self._run_step}/{total}")
             else:
                 self.mode = "remote"
                 self._say("run", tr(
                     f"прервано на шаге {self._run_step} из {total} — пульт",
                     f"aborted at step {self._run_step} of {total} — remote",
                 ))
-            self._journal_write(
-                tr(f"прервано на шаге {self._run_step}/{total}",
-                   f"aborted at step {self._run_step}/{total}"),
-                total, planned, elapsed,
-            )
+                result = tr(f"прервано на шаге {self._run_step}/{total}",
+                            f"aborted at step {self._run_step}/{total}")
+            self._journal_write(result, total, planned, elapsed)
         # вернуть подсветку, как было до запуска
         self.led_color = prev_led
         if self._is_connected():
