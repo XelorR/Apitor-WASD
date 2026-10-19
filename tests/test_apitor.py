@@ -103,6 +103,13 @@ def main():
         out = app.send(["p"])
         failures += not check("P enters program mode", "[prog]" in out and "пусто" in out, out)
 
+        out = app.send(["]"])
+        failures += not check("] changes the speed even on an empty program",
+                              "скор. 7" in out and "пусто" in out, out)
+        out = app.send(["["])
+        failures += not check("[ changes it back on an empty program",
+                              "скор. 6" in out, out)
+
         out = app.send(["w", "w", "a", "s"])
         failures += not check("steps added", "↑2" in out and "←" in out, out)
 

@@ -30,7 +30,7 @@ def check(name, cond, info=""):
 
 
 ANSI = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]")
-ROW = re.compile(r"\x1b\[(\d+);1H\x1b\[2K(.*?)(?=\x1b\[[0-9]+;1H|\Z)", re.S)
+ROW = re.compile(r"\x1b\[(\d+);1H\x1b\[2K(.*?)(?=\x1b\[[0-9]+;1H|\x1b\[\?25l|\Z)", re.S)
 
 
 def screens(out):

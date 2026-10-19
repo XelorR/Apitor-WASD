@@ -279,11 +279,14 @@ _LAYOUT = {
     "й": "q", "ц": "w", "у": "e", "ф": "a", "ы": "s", "в": "d", "е": "t",
     "р": "h", "д": "l", "л": "k", "о": "j", "ш": "i", "к": "r", "а": "f", "п": "g",
     "с": "c", "и": "b", "ч": "x", "з": "p", "ь": "m", "н": "y", "т": "n",
-    "х": "[", "ъ": "]",
+    "х": "[", "ъ": "]", "ї": "]",  # х/ъ — русская раскладка, ї — украинская
     "Й": "Q", "Ц": "W", "У": "E", "Ф": "A", "Ы": "S", "В": "D", "Е": "T",
     "Р": "H", "Д": "L", "Л": "K", "О": "J", "Ш": "I", "К": "R", "А": "F", "П": "G",
     "С": "C", "И": "B", "Ч": "X", "З": "P", "Ь": "M", "Н": "Y", "Т": "N",
-    "Х": "[", "Ъ": "]",
+    "Х": "[", "Ъ": "]", "Ї": "]",
+    # Shift+[ и Shift+] (US): скорость — не редкость нажать их с зажатым
+    # Shift (он же буст), поэтому принимаем и фигурные скобки.
+    "{": "[", "}": "]",
 }
 
 
@@ -599,9 +602,11 @@ class ProgramEditor:
     # -- живая строка -------------------------------------------------------- #
     def line(self) -> str:
         if not self.steps:
+            # Скорость видна и на пустой программе: иначе ] и [ «молчат» —
+            # строка не меняется, и кажется, что клавиши не работают.
             return tr(
-                "(пусто) — w/a/s/d — шаги, Enter — запуск, Esc — пульт, h — справка",
-                "(empty) — w/a/s/d — steps, Enter — run, Esc — remote, h — help",
+                f"(пусто) · скор. {self.speed} — w/a/s/d — шаги, Enter — запуск, Esc — пульт, h — справка",
+                f"(empty) · speed {self.speed} — w/a/s/d — steps, Enter — run, Esc — remote, h — help",
             )
         words = [step_text(s) for s in self.steps]
         if len(words) > 8:
@@ -644,8 +649,16 @@ class ProgramEditor:
         self._capture_digits = ""
 
     def _speed(self, delta: int, now: float) -> EditorResult:
-        self.speed = max(SPEED_MIN, min(SPEED_MAX, self.speed + delta))
+        # Захват цифр включаем всегда: «]12» должно работать и на пределе 12,
+        # когда первое нажатие уже ничего не меняет.
         self._arm("speed", now)
+        new_speed = max(SPEED_MIN, min(SPEED_MAX, self.speed + delta))
+        if new_speed == self.speed:
+            return EditorResult("warn", tr(
+                f"скорость уже {self.speed} (предел {SPEED_MIN}..{SPEED_MAX})",
+                f"speed is already {self.speed} (range {SPEED_MIN}..{SPEED_MAX})",
+            ))
+        self.speed = new_speed
         return EditorResult("line", self.line())
 
     def _digit(self, digit: str, now: float) -> EditorResult:
@@ -1417,7 +1430,10 @@ class Tui:
         chunks = []
         for number, row in enumerate(rows[:height], 1):
             chunks.append(f"\x1b[{number};1H\x1b[2K{row}")
-        chunks.append(f"\x1b[{height};1H\x1b[J\x1b[?25l")
+        # Ниже кадра стирать нечего (он занимает ровно height строк), а
+        # \x1b[{height};1H\x1b[J стёр бы последнюю строку — там строка
+        # программы или приглашение ввода. Поэтому только прячем курсор.
+        chunks.append("\x1b[?25l")
         with self._lock:
             try:
                 sys.stdout.write("".join(chunks))
@@ -1467,8 +1483,11 @@ class Tui:
         remote = self.remote
         link = (tr("подключён", "connected") if remote._is_connected()
                 else tr("нет связи", "no link"))
+        # В редакторе ] и [ меняют скорость программы — её и показываем,
+        # иначе в шапке «ничего не происходит».
+        speed = remote.editor.speed if remote.mode == "editor" else remote.speed
         parts = [f"Apitor {remote.profile.name}", link,
-                 tr(f"скор. {remote.speed}", f"speed {remote.speed}")
+                 tr(f"скор. {speed}", f"speed {speed}")
                  + ("+" if remote._boost_speed is not None else "")]
         if remote.mode == "remote":
             parts.append(tr("круиз-контроль", "cruise") if remote.latched
@@ -1499,7 +1518,9 @@ class Tui:
             text = " · ".join(step_text(step) for step in steps[-8:])
             return f"[rec] {text} ({len(steps)} {steps_word(len(steps))})"
         if not remote.editor.steps:
-            return None
+            # В редакторе строка видна всегда (в ней скорость: ] и [ должны
+            # давать отклик и на пустой программе).
+            return remote.editor.line() if remote.mode == "editor" else None
         if remote.mode == "editor":
             return remote.editor.line()
         n = len(remote.editor.steps)

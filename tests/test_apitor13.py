@@ -36,7 +36,10 @@ def check(name, cond, info=""):
 
 
 ANSI = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]")
-ROW = re.compile(r"\x1b\[(\d+);1H\x1b\[2K(.*?)(?=\x1b\[[0-9]+;1H|\Z)", re.S)
+ROW = re.compile(r"\x1b\[(\d+);1H\x1b\[2K(.*?)(?=\x1b\[[0-9]+;1H|\x1b\[\?25l|\Z)", re.S)
+# ED (CSI J) с курсором в начале строки стирает её и всё ниже: так видно,
+# что последняя строка кадра (программа/приглашение) реально на экране.
+ERASE_DOWN = re.compile(r"\x1b\[(\d+);1H\x1b\[J")
 
 
 def screens(out):
@@ -45,6 +48,9 @@ def screens(out):
     for segment in out.split("\x1b[1;1H")[1:]:
         rows = {int(n): ANSI.sub("", text)
                 for n, text in ROW.findall("\x1b[1;1H" + segment)}
+        for n, _ in ERASE_DOWN.findall(segment):
+            for number in [k for k in rows if k >= int(n)]:
+                rows.pop(number, None)
         if rows:
             result.append(rows)
     return result
@@ -153,7 +159,16 @@ try:
     check("banner switches to program mode keys",
           ("режим программы:" in state.get(2, "") and "шаги" in state.get(2, "")), state.get(2, ""))
     check("mode segment shows программа", "программа" in state.get(1, ""), state.get(1, ""))
-    check("empty program -> no program row", prog_row(state) == "", state.get(23, ""))
+    check("empty program -> no step row", prog_row(state) == "", state.get(23, ""))
+    check("empty program: bottom row shows the speed",
+          "пусто" in state.get(24, "") and "скор. 6" in state.get(24, ""), state.get(24, ""))
+
+    out = key("]")
+    state = last_screen(out)
+    check("] reaches the editor header", "скор. 7" in state.get(1, ""), state.get(1, ""))
+    check("] reaches the empty program row",
+          "пусто" in state.get(24, "") and "скор. 7" in state.get(24, ""), state.get(24, ""))
+    key("[", 0.4)
 
     key("w")
     out = key("w")

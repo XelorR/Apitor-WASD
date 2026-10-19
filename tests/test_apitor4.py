@@ -77,6 +77,19 @@ try:
     send(["q"], 1.2)
     out = send(["p"])
     check("program mode EN", "(empty)" in out and "Esc — remote" in out, out)
+    out = send(["]"])
+    check("] raises the speed on an empty program",
+          "(empty)" in out and "speed 7" in out, out)
+    out = send(["["])
+    check("[ lowers the speed back", "speed 6" in out, out)
+    out = send(["}"])  # Shift+] on a US layout
+    check("Shift+] works like ]", "speed 7" in out, out)
+    out = send(["{", "ъ"])  # Shift+[ and the Cyrillic ] key
+    check("Shift+[ and Cyrillic ] work", "speed 6" in out and "speed 7" in out, out)
+    out = send(["]", "1", "2"])
+    check("]12 sets the exact speed", "speed 12" in out, out)
+    out = send(["]"])
+    check("at the limit the editor says so", "already 12" in out, out)
     out = send(["E"], wait=1.2)
     check("editor EN", "updated from the editor" in out and "↑3" in out, out)
     out = send(["x"])
