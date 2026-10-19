@@ -3603,39 +3603,52 @@ class WinApiKeyState:
     LETTER_SCANCODE = {"fwd": 0x11, "left": 0x1E, "back": 0x1F, "right": 0x20}  # W A S D
     LETTER_VK = {"fwd": 0x57, "left": 0x41, "back": 0x53, "right": 0x44}
     ARROW_VK = {"fwd": 0x26, "back": 0x28, "left": 0x25, "right": 0x27}
-    BOOST_VK = (0xA0, 0xA1)  # VK_LSHIFT, VK_RSHIFT — буст скорости в пульте
+    SHIFT_VK = (0x10, 0xA0, 0xA1)  # VK_SHIFT, VK_LSHIFT, VK_RSHIFT — буст
+    # Скан-код -> виртуальная клавиша раскладки. Именно 3: 2 — это
+    # MAPVK_VK_TO_CHAR, и скан-код клавиши D (0x20) читался бы как VK_SPACE,
+    # поэтому D на Windows не поворачивала робота вправо (а пробел — поворачивал).
+    MAPVK_VSC_TO_VK_EX = 3
 
-    def __init__(self, on_change, on_fail) -> None:
+    def __init__(self, on_change, on_fail, user32=None) -> None:
         self._on_change = on_change
         self._on_fail = on_fail
-        self._user32 = None
+        self._user32 = user32  # подменный user32 для тестов; иначе — настоящий
         self._vk_by_action: dict[str, tuple[int, ...]] = {}
         self._down: frozenset[str] = frozenset()
         self._task: asyncio.Task | None = None
 
     async def start(self) -> str | None:
-        import ctypes  # только для Windows; импорт внутри, чтобы не мешать Linux
+        if self._user32 is None:
+            import ctypes  # только для Windows; импорт внутри, чтобы не мешать Linux
 
-        try:
-            self._user32 = ctypes.windll.user32
-            self._user32.GetAsyncKeyState.restype = ctypes.c_short
-            self._user32.GetAsyncKeyState.argtypes = (ctypes.c_int,)
-            self._user32.GetKeyboardLayout.restype = ctypes.c_void_p
-            self._user32.GetKeyboardLayout.argtypes = (ctypes.c_uint,)
-            self._user32.MapVirtualKeyExW.restype = ctypes.c_uint
-            self._user32.MapVirtualKeyExW.argtypes = (
-                ctypes.c_uint, ctypes.c_uint, ctypes.c_void_p,
-            )
-        except Exception as exc:  # noqa: BLE001 — WinAPI может быть недоступен
-            return f"WinAPI недоступен ({exc})"
+            try:
+                user32 = ctypes.windll.user32
+                user32.GetAsyncKeyState.restype = ctypes.c_short
+                user32.GetAsyncKeyState.argtypes = (ctypes.c_int,)
+                user32.GetKeyboardLayout.restype = ctypes.c_void_p
+                user32.GetKeyboardLayout.argtypes = (ctypes.c_uint,)
+                user32.MapVirtualKeyExW.restype = ctypes.c_uint
+                user32.MapVirtualKeyExW.argtypes = (
+                    ctypes.c_uint, ctypes.c_uint, ctypes.c_void_p,
+                )
+            except Exception as exc:  # noqa: BLE001 — WinAPI может быть недоступен
+                return f"WinAPI недоступен ({exc})"
+            self._user32 = user32
         hkl = self._user32.GetKeyboardLayout(0)
         vk_by_action = {}
         for action, scancode in self.LETTER_SCANCODE.items():
-            # Скан-код -> виртуальная клавиша по текущей раскладке: физическая W
-            # работает и при русской раскладке (MAPVK_VSC_TO_VK_EX = 2).
-            vk = self._user32.MapVirtualKeyExW(scancode, 2, hkl) or self.LETTER_VK[action]
-            vk_by_action[action] = (vk, self.ARROW_VK[action])
-        vk_by_action["boost"] = self.BOOST_VK
+            # VK по текущей раскладке (у русской раскладки для WASD те же VK),
+            # плюс латинская клавиша и стрелка: раскладка окна может не
+            # совпадать с раскладкой пульта.
+            layout_vk = self._user32.MapVirtualKeyExW(
+                scancode, self.MAPVK_VSC_TO_VK_EX, hkl
+            )
+            candidates: list[int] = []
+            for vk in (layout_vk, self.LETTER_VK[action], self.ARROW_VK[action]):
+                if vk and vk not in candidates:
+                    candidates.append(vk)
+            vk_by_action[action] = tuple(candidates)
+        vk_by_action["boost"] = self.SHIFT_VK
         self._vk_by_action = vk_by_action
         self._task = asyncio.get_running_loop().create_task(self._poll())
         return None
