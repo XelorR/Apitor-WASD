@@ -42,7 +42,7 @@ env["TERM"] = "dumb"
 env["HOME"] = FAKEHOME
 master, slave = pty.openpty()
 proc = subprocess.Popen(
-    [PY, APP, "--simulate", "--speed", "4", "--key-state-device", KBD,
+    [PY, APP, "--simulate", "--no-tui", "--speed", "4", "--key-state-device", KBD,
      "--program-dir", PROGDIR],
     stdin=slave, stdout=slave, stderr=slave, cwd=ROOT, env=env, close_fds=True,
 )

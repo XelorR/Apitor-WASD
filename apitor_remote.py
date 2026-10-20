@@ -77,18 +77,19 @@ Shift) — то же самое, но без пауз: маршрут проез
 скорость становится 12, а после отпускания возвращается прежняя (Shift+Q
 при этом по-прежнему отключает робота).
 
-С флагом --tui пульт занимает весь экран: сверху состояние (робот, связь,
+По умолчанию пульт занимает весь экран: сверху состояние (робот, связь,
 скорость, режим, свет), в середине — лог событий, снизу — строка программы
 и подсказки. Клавиши и поведение те же; при выходе терминал возвращается
 как был. Внешний редактор ($EDITOR, клавиша E) на время работы забирает
-экран себе.
+экран себе. Флаг --no-tui возвращает обычный построчный вывод (например,
+для очень старого терминала), --tui по-прежнему принимается.
 
 Примеры:
 
     .venv/bin/python apitor_remote.py                # Robot R, скорость 6
     .venv/bin/python apitor_remote.py --speed 9      # быстрее
     .venv/bin/python apitor_remote.py --simulate     # без Bluetooth: печать кадров
-    .venv/bin/python apitor_remote.py --tui          # полноэкранный интерфейс
+    .venv/bin/python apitor_remote.py --no-tui       # обычный построчный вывод
     .venv/bin/python apitor_remote.py --key-state-device /dev/input/event7  # одна клавиатура
     .venv/bin/python apitor_remote.py --address AA:BB:CC:DD:EE:FF
     .venv/bin/python apitor_remote.py --program programs/квадрат.txt
@@ -1652,7 +1653,7 @@ class Remote:
         self.scan_timeout = max(2.0, args.scan_timeout)
         self.cli_address = (args.address or "").strip() or None
         self.verbose = bool(args.verbose)
-        self.want_tui = bool(getattr(args, "tui", False))  # --tui: полноэкранный режим
+        self.want_tui = bool(getattr(args, "tui", True))  # TUI по умолчанию; --no-tui — обычный вывод
         self.tui: Tui | None = None
 
         # Настройки программы: флаг > config.json > значение по умолчанию.
@@ -4221,9 +4222,11 @@ def build_parser() -> argparse.ArgumentParser:
                         help=argparse.SUPPRESS)  # прежнее имя флага, для совместимости
     parser.add_argument("--simulate", action="store_true",
                         help=tr("без Bluetooth: печатать кадры", "no Bluetooth: print frames"))
-    parser.add_argument("--tui", action="store_true",
-                        help=tr("полноэкранный интерфейс: статус сверху, лог, подсказки",
-                                "full-screen interface: status bar, log, hints"))
+    parser.add_argument("--no-tui", dest="tui", action="store_false",
+                        help=tr("обычный построчный вывод без полноэкранного интерфейса",
+                                "plain line-by-line output without the full-screen interface"))
+    parser.add_argument("--tui", dest="tui", action="store_true",
+                        help=argparse.SUPPRESS)  # прежнее имя; полноэкранный режим теперь по умолчанию
     parser.add_argument(
         "--key-state-device",
         action="append",

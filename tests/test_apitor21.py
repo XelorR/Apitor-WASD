@@ -192,7 +192,7 @@ env["EDITOR"] = "true"
 master, slave = pty.openpty()
 fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 100, 0, 0))
 proc = subprocess.Popen(
-    [PY, APP, "--simulate", "--key-state-device", KBD, "--program-dir", WORK + "/programs"],
+    [PY, APP, "--simulate", "--no-tui", "--key-state-device", KBD, "--program-dir", WORK + "/programs"],
     stdin=slave, stdout=slave, stderr=slave, cwd=ROOT, env=env, close_fds=True,
 )
 os.close(slave)

@@ -70,6 +70,17 @@ help_text = " ".join((mod.build_parser().format_help() + mod.build_parser().form
 check("--cruise есть в --help", "--cruise" in help_text, help_text[:200])
 check("--latched спрятан из --help", "--latched" not in help_text, help_text[:200])
 
+# ── TUI: включён по умолчанию, --no-tui — обычный вывод ────────────────────── #
+args, _ = parser_args([])
+check("TUI включён по умолчанию", args.tui is True)
+args, _ = parser_args(["--no-tui"])
+check("--no-tui выключает TUI", args.tui is False)
+args, _ = parser_args(["--tui"])
+check("прежний --tui тоже принимается", args.tui is True)
+check("--no-tui есть в --help", "--no-tui" in help_text, help_text[:200])
+check("--tui спрятан из --help",
+      not re.search(r"(?<![\w-])--tui(?![\w-])", help_text), help_text[:200])
+
 # ── коды выхода 2: без TTY, плохая модель, плохой файл программы ───────────── #
 r = run([])
 check("без терминала: код 2", r.returncode == 2, r.returncode)
@@ -99,7 +110,7 @@ def pty_app(extra=(), wait=1.4):
     master, slave = pty.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 100, 0, 0))
     proc = subprocess.Popen(
-        [PY, APP, "--simulate", "--key-state-device", NOKS, "--program-dir", PROGDIR, *extra],
+        [PY, APP, "--simulate", "--no-tui", "--key-state-device", NOKS, "--program-dir", PROGDIR, *extra],
         stdin=slave, stdout=slave, stderr=slave, cwd=ROOT, env=env, close_fds=True,
     )
     os.close(slave)
@@ -146,6 +157,8 @@ def quit_app(proc, master):
 
 proc, master, take, key = pty_app(["--cruise"])
 out = take()
+check("--no-tui: обычный вывод без альтернативного экрана",
+      "\x1b[?1049h" not in out and "\x1b[?25l" not in out, out[:120])
 check("--cruise: баннер сообщает о круиз-контроле",
       "режим: круиз-контроль" in out, out)
 key("q")

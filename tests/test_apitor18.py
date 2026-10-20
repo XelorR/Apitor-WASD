@@ -48,7 +48,7 @@ env["HOME"] = WORK + "/home"
 master, slave = pty.openpty()
 fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 100, 0, 0))
 proc = subprocess.Popen(
-    [PY, APP, "--simulate", "--no-key-state",
+    [PY, APP, "--simulate", "--no-tui", "--no-key-state",
      "--key-state-device", WORK + "/nope",  # даже такой путь не должен пугать
      "--program-dir", WORK + "/programs"],
     stdin=slave, stdout=slave, stderr=slave, cwd=ROOT, env=env, close_fds=True,

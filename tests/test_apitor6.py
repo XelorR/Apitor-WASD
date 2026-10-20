@@ -26,7 +26,7 @@ class App:
     def __init__(self, extra=()):
         self.master, slave = pty.openpty()
         self.proc = subprocess.Popen(
-            [PY, APP, "--simulate", "--key-state-device", NOKS, *extra],
+            [PY, APP, "--simulate", "--no-tui", "--key-state-device", NOKS, *extra],
             stdin=slave, stdout=slave, stderr=slave, cwd=APPDIR, env=env,
             close_fds=True,
         )

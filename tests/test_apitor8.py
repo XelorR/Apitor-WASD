@@ -74,7 +74,7 @@ env["TERM"] = "dumb"
 env["HOME"] = WORK
 master, slave = pty.openpty()
 proc = subprocess.Popen(
-    [PY, APP, "--simulate", "--key-state-device", NOKS, "--program", prog, "--program-dir", PROGDIR,
+    [PY, APP, "--simulate", "--no-tui", "--key-state-device", NOKS, "--program", prog, "--program-dir", PROGDIR,
      "--step-time", "0.05", "--turn-time", "0.05", "--pause-time", "0.05",
      "--blink-time", "0.02"],
     stdin=slave, stdout=slave, stderr=slave, cwd=ROOT, env=env, close_fds=True,

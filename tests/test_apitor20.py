@@ -84,7 +84,7 @@ env["EDITOR"] = "true"       # «редактор», который сразу �
 master, slave = pty.openpty()
 fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 100, 0, 0))
 proc = subprocess.Popen(
-    [PY, APP, "--simulate", "--key-state-device", KBD, "--program-dir", WORK + "/programs"],
+    [PY, APP, "--simulate", "--no-tui", "--key-state-device", KBD, "--program-dir", WORK + "/programs"],
     stdin=slave, stdout=slave, stderr=slave, cwd=ROOT, env=env, close_fds=True,
 )
 os.close(slave)
@@ -251,7 +251,7 @@ check("выход по Ctrl+C", proc.returncode == 0, proc.returncode)
 master2, slave2 = pty.openpty()
 fcntl.ioctl(slave2, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 100, 0, 0))
 proc2 = subprocess.Popen(
-    [PY, APP, "--simulate", "--key-state-device", KBD + "2", "--program-dir", WORK + "/programs"],
+    [PY, APP, "--simulate", "--no-tui", "--key-state-device", KBD + "2", "--program-dir", WORK + "/programs"],
     stdin=slave2, stdout=slave2, stderr=slave2, cwd=ROOT, env=env, close_fds=True,
 )
 os.close(slave2)

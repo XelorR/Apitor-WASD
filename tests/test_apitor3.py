@@ -28,7 +28,7 @@ env["TERM"] = "dumb"
 env["EDITOR"] = stub
 master, slave = pty.openpty()
 proc = subprocess.Popen(
-    [PY, APP, "--simulate", "--key-state-device", NOKS, "--program-dir", PROGDIR],
+    [PY, APP, "--simulate", "--no-tui", "--key-state-device", NOKS, "--program-dir", PROGDIR],
     stdin=slave, stdout=slave, stderr=slave, cwd=ROOT, env=env, close_fds=True,
 )
 os.close(slave)

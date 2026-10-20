@@ -854,8 +854,10 @@ stops the motors before quitting.
 
 **The easiest way:** double-click `run.sh` (Linux) or `run.bat`
 (Windows). The file creates `.venv`, installs the dependency, opens a
-terminal and starts the remote. Flags are passed through as they are:
-`run.sh --tui` or `run.bat --program examples/square.txt`.
+terminal and starts the remote. The remote opens full-screen right away,
+and `--no-tui` brings back the plain line-by-line output. Flags are
+passed through as they are:
+`run.sh --no-tui` or `run.bat --program examples/square.txt`.
 
 **Install by hand** (once):
 
@@ -869,9 +871,8 @@ python3 -m venv .venv
 
 ```bash
 ./run.sh                                         # all of that in one command
-.venv/bin/python apitor_remote.py                # the usual remote
-.venv/bin/python apitor_remote.py --tui          # full-screen interface:
-                                                 # the banner on top shows the mode keys
+.venv/bin/python apitor_remote.py                # full-screen remote (default)
+.venv/bin/python apitor_remote.py --no-tui       # plain line-by-line output
 .venv/bin/python apitor_remote.py --simulate     # no robot: print frames
 .venv/bin/python apitor_remote.py --program examples/square.txt
 ```
@@ -896,7 +897,7 @@ Useful flags (the full list is in the README):
 |---|---|
 | `--speed 6` | starting speed 1…12 |
 | `--product r` | robot model: `r`, `j`, `s`, `q`, `x`, `w` |
-| `--tui` | full-screen interface with a banner and a message log |
+| `--no-tui` | plain line-by-line output (full-screen is the default; the old `--tui` is still accepted) |
 | `--no-cache` | do not use the saved robot address |
 | `--simulate` | no robot: print the frames that would be sent |
 | `--cruise` | start with cruise control on (the old name `--latched` still works) |
@@ -999,7 +1000,7 @@ factory settings: it recreates them on the next launch.
 * **The square** — the first real program: four turns (section 8, page {{page:8}}).
 * **The firefly** — a dance program: turns and coloured flashes (section 9, page {{page:9}}).
 * **Vocabulary** — every word a program file understands (section 11, page {{page:11}}).
-* **Flag** — a word after the program name on the command line: `--tui`, `--simulate` (section 14, page {{page:14}}).
+* **Flag** — a word after the program name on the command line: `--no-tui`, `--simulate` (section 14, page {{page:14}}).
 * **Simulation** — the mode without a robot: frames are printed, nobody is scanned (section 14, page {{page:14}}).
 * **Robot address** — its Bluetooth “name”; the remote remembers it, so `q` is quick (section 3, page {{page:3}}).
 * **STOP** — `space` or `Esc`: the robot freezes and drives no more (section 4, page {{page:4}}).

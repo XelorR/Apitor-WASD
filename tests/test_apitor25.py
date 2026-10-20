@@ -48,7 +48,7 @@ class Term:
         self.master, slave = pty.openpty()
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 100, 0, 0))
         self.proc = subprocess.Popen(
-            [PY, APP, "--simulate", "--no-key-state", "--log",
+            [PY, APP, "--simulate", "--no-tui", "--no-key-state", "--log",
              "--program-dir", PROGDIR, *extra],
             stdin=slave, stdout=slave, stderr=slave, cwd=ROOT, env=env, close_fds=True,
         )

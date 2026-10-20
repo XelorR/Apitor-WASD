@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""--tui: full-screen interface — status header, log, program row, prompts."""
+"""TUI by default: status header, log, program row, prompts (--tui still works)."""
 import fcntl
 import os
 import pty
@@ -104,7 +104,7 @@ env["EDITOR"] = EDITOR
 master, slave = pty.openpty()
 fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 76, 0, 0))
 proc = subprocess.Popen(
-    [PY, APP, "--simulate", "--tui", "--key-state-device", os.path.join(WORK, "nope"),
+    [PY, APP, "--simulate", "--key-state-device", os.path.join(WORK, "nope"),
      "--program-dir", PROGDIR],
     stdin=slave, stdout=slave, stderr=slave, cwd=ROOT, env=env, close_fds=True,
 )

@@ -19,7 +19,7 @@ env = dict(os.environ)
 env["TERM"] = "dumb"
 master, slave = pty.openpty()
 proc = subprocess.Popen(
-    [PY, APP, "--simulate", "--key-state-device", NOKS, "--program-dir", PROGDIR],
+    [PY, APP, "--simulate", "--no-tui", "--key-state-device", NOKS, "--program-dir", PROGDIR],
     stdin=slave, stdout=slave, stderr=slave, cwd=ROOT, env=env, close_fds=True,
 )
 os.close(slave)
@@ -132,7 +132,7 @@ finally:
 for flag in ("--cruise", "--latched"):
     master, slave = pty.openpty()
     proc = subprocess.Popen(
-        [PY, APP, "--simulate", "--key-state-device", NOKS, flag, "--program-dir", PROGDIR],
+        [PY, APP, "--simulate", "--no-tui", "--key-state-device", NOKS, flag, "--program-dir", PROGDIR],
         stdin=slave, stdout=slave, stderr=slave, cwd=ROOT, env=env, close_fds=True,
     )
     os.close(slave)
