@@ -183,6 +183,107 @@ check("reversed_steps с готовым steps= совпадает со стар�
                               steps=steps_of("вперёд 1с\nвлево 2с"))))
 
 
+# --------------------------------------------------------------------------- #
+# Часть A2: продолжение обычной программы с паузы (Enter)
+# --------------------------------------------------------------------------- #
+def remaining(text, index, used):
+    editor = editor_for(text)
+    info = mod.ResumeInfo(editor.steps, index, used, editor)
+    return show(info.remaining())
+
+
+check("продолжение: остаток текущего шага и всё после него",
+      remaining("вперёд 5с\nвправо 2с", 0, 3.0) == "↑2с · →2с",
+      remaining("вперёд 5с\nвправо 2с", 0, 3.0))
+check("продолжение: соседние одинаковые движения склеиваются",
+      remaining("вперёд 2с\nвперёд 3с", 0, 1.0) == "↑4с",
+      remaining("вперёд 2с\nвперёд 3с", 0, 1.0))
+check("продолжение: на конце программы остаётся пусто",
+      remaining("вперёд 2с", 1, 0.0) == "" and
+      remaining("вперёд 2с", 0, 2.0) == "",
+      (remaining("вперёд 2с", 1, 0.0), remaining("вперёд 2с", 0, 2.0)))
+
+editor = editor_for("вперёд 5с\nвправо 2с")
+info = mod.ResumeInfo(editor.steps, 0, 3.0, editor, repeat=4, rep=2)
+check("продолжение: остаток круга и оставшиеся повторы",
+      show(info.remaining_all()) == "↑2с · →2с · ↑5с · →2с · ↑5с · →2с",
+      show(info.remaining_all()))
+
+
+class PauseStub:
+    """Мини-пульт в паузе: план, проеханное и текущий шаг."""
+
+
+editor = editor_for("вперёд 5с\nвправо 2с")
+PauseStub._run_plan = mod.RunPlan(editor.steps, 6, 1, editor=editor)
+PauseStub._run_done = [editor.steps[0]]
+PauseStub._run_current = editor.steps[1]
+PauseStub._run_progress = 0.5
+PauseStub._run_step = 2
+PauseStub._run_rep = 1
+PauseStub._run_editor = editor
+PauseStub.speed = 6
+PauseStub._run_led = mod.Color.WHITE
+PauseStub._resume_info_from_run = mod.Remote._resume_info_from_run
+resume = mod.Remote._resume_plan(PauseStub())
+check("Enter на паузе обычного прогона: остаток шага и дальше",
+      resume is not None and show(resume.steps) == "→1.5с",
+      show(resume.steps) if resume else None)
+check("продолжение с места — без повтора и с пометкой partial",
+      resume is not None and resume.repeat == 1 and resume.partial
+      and resume.rev is None,
+      (resume.repeat, resume.partial, resume.rev) if resume else None)
+
+editor = editor_for("вперёд 5с\nвправо 2с")
+RepeatStub = type("RepeatStub", (), {})
+RepeatStub._run_plan = mod.RunPlan(editor.steps, 6, 4, editor=editor)
+RepeatStub._run_done = [editor.steps[0]]
+RepeatStub._run_current = editor.steps[1]
+RepeatStub._run_progress = 0.5
+RepeatStub._run_step = 2
+RepeatStub._run_rep = 2
+RepeatStub._run_editor = editor
+RepeatStub.speed = 6
+RepeatStub._run_led = mod.Color.WHITE
+RepeatStub._resume_info_from_run = mod.Remote._resume_info_from_run
+resume = mod.Remote._resume_plan(RepeatStub())
+check("Enter на паузе повторяемой программы: остаток и оставшиеся круги",
+      resume is not None
+      and show(resume.steps) == "→1.5с · ↑5с · →2с · ↑5с · →2с",
+      show(resume.steps) if resume else None)
+
+# Тот самый пример: вперёд 5, вправо 5, вперёд 20; пауза на 16-й секунде,
+# реверс доехал назад 16 с и 3 с поворота налево.
+editor = editor_for("вперёд 5с\nвправо 5с\nвперёд 20с")
+reverse = mod.partial_reverse_steps(
+    editor.steps[:2], editor, "back", current=editor.steps[2], used=16.0)
+origin = mod.ResumeInfo(editor.steps, 2, 16.0, editor, speed=6, led=8)
+reverse_plan = mod.RunPlan(reverse, 6, 1, "back", partial=True,
+                           editor=editor, origin=origin)
+
+
+class ReversePauseStub:
+    _run_plan = reverse_plan
+    _run_done = [reverse[0]]
+    _run_current = reverse[1]
+    _run_progress = 3.0
+    _run_step = 2
+    _run_rep = 1
+    _run_editor = editor
+    speed = 6
+    _run_led = mod.Color.WHITE
+
+
+resume = mod.Remote._resume_plan(ReversePauseStub())
+check("Enter на паузе реверса: 3 с поворота направо и 20 с вперёд",
+      resume is not None and show(resume.steps) == "→3с · ↑20с",
+      show(resume.steps) if resume else None)
+check("продолжение после реверса не повторяет программу",
+      resume is not None and resume.repeat == 1 and resume.partial
+      and resume.rev is None,
+      (resume.repeat, resume.partial, resume.rev) if resume else None)
+
+
 class ResumeStub:
     """Мини-пульт: пауза уже нажата, частичный реверс ждёт остановки прогона."""
     _run_paused = True
@@ -386,6 +487,50 @@ try:
     check("R на паузе: доехали", "готово: 2 шага" in out, out)
 finally:
     t.stop()
+
+# ── сценарий 6: Enter на паузе обычного прогона — продолжить с места ──────── #
+t = Term("вперёд 1.2с\nвправо 0.6с\n", "сценарий6.txt")
+try:
+    t.key("\r", 0.2)
+    t.wait(0.4)
+    out = t.key(" ", 0.2)
+    check("обычная пауза: подсказка про Enter",
+          "Enter — с места" in out, out)
+    out = t.key("\r", 4.0)
+    check("Enter на паузе: останавливает и продолжает с места",
+          "сейчас продолжу с текущего места" in out
+          and "старт: 2 шага · скор. 6 · продолжение с места" in out, out)
+    check("Enter на паузе: остаток шага и следующий шаг",
+          re.search(r"▶ ↑\d+(?:\.\d+)?с", out) is not None
+          and "▶ →0.6с" in out, out)
+    check("Enter на паузе: программа доехала", "готово: 2 шага" in out, out)
+finally:
+    t.stop()
+
+# ── сценарий 7: пауза во время реверса, Enter — обратно на обычный маршрут ── #
+t = Term("вперёд 0.8с\nвправо 2с\nвперёд 0.6с\n", "сценарий7.txt")
+try:
+    t.key("\r", 0.2)
+    t.wait(2.7)                    # ~0.1 с последнего «вперёд»
+    t.key(" ", 0.2)
+    out = t.key("r", 1.1)          # назад 0.1 с и в поворот налево
+    check("сценарий 7: реверс поехал",
+          "реверс проеханной части" in out and "▶ ←" in out, out)
+    t.key(" ", 0.2)                # пауза в повороте реверса
+    out = t.key("\r", 2.5)
+    check("Enter на паузе реверса: продолжение с места",
+          "сейчас продолжу с текущего места" in out
+          and "продолжение с места" in out, out)
+    check("Enter на паузе реверса: поворот направо и снова вперёд",
+          "▶ →" in out and "▶ ↑" in out, out)
+    check("Enter на паузе реверса: доехали", "готово: 2 шага" in out, out)
+finally:
+    t.stop()
+
+check("журнал: продолжение с места записано",
+      os.path.exists(JOURNAL) and "продолжение с шага" in open(
+          JOURNAL, encoding="utf-8").read(),
+      open(JOURNAL, encoding="utf-8").read() if os.path.exists(JOURNAL) else "нет файла")
 
 print()
 print("ОШИБОК:", failures)

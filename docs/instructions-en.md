@@ -65,11 +65,14 @@ What you need:
   Bluetooth adapter;
 * a **terminal window** where the remote is already running.
 
-When everything is ready, you see something like this:
+When everything is ready, the screen is arranged like this: the last
+program is in a frame at the top, the big keys `W A S D` with arrows
+are in the middle, and the diary is in a frame at the bottom. The
+diary shows something like this:
 
 ```
 [info] Apitor remote — Robot R (product 'r')
-[hint] q — connect · Shift+Q — disconnect · w/a/s/d — drive · …
+[robot] looking for the robot...
 ```
 
 The remote is not connected to the robot yet — that happens when you
@@ -92,9 +95,9 @@ What the remote cannot do: it does not drive the robot from far away
 (stay within a few metres), it does not replace the official app, and it
 cannot carry the robot up the stairs.
 
-The remote also tells you what is going on: the lines `[robot]`,
-`[prog]`, `[run]` are its diary. They show what the robot is doing
-right now:
+The remote also tells you what is going on: the bottom frame is its
+diary with the lines `[robot]`, `[prog]`, `[run]`. They show what the
+robot is doing right now:
 
 ```
 [robot] connected: Robot R (AA:BB:CC:DD:EE:FF)
@@ -108,10 +111,10 @@ motors, an LED light and a third motor for accessories — so the
 remote works with every model.
 
 <div class="mission">
-**Challenge “First look”.** Open the remote and find three lines on
-the screen: `[robot]`, `[prog]` and `[run]`. Tell what each one
-means. Then find the `h` key — the remote will tell you about the
-keys itself.
+**Challenge “First look”.** Open the remote and find three parts of
+the screen: the last-program frame, the big `W A S D` keys with
+arrows, and the diary frame at the bottom. Then find the `h` key —
+the remote will tell you about the keys itself.
 </div>
 
 # 2. Meet the robot
@@ -320,7 +323,7 @@ How to move around:
 | `p` or `P` | into the program mode — always, from anywhere |
 | `Enter` | start the program (the run begins) |
 | `Esc` | back to the remote (the program stays in memory) |
-| `Enter` | drive the program (with `Shift` — without pauses) |
+| `Enter` | when paused: continue from here |
 | `r` `t` | in the remote: drive the route back (section 12, page {{page:12}}) |
 
 A trick: if you press `p` while the robot is driving, the remote stops it
@@ -692,22 +695,16 @@ All four keys side by side:
 | `t` | the same, but forward — for a robot you turned by hand |
 | `R` `T` | the same without pauses, in one go |
 | `space`, then `r` / `t` | drive back only the part already done |
+| `space`, then `Enter` | return to the normal route and finish it from here |
 
-In the remote window you can see it in the `[run]` lines:
+In the remote window you can see the speed and the steps of the way back:
 
 ```
 [run] start: 9 steps · speed 6 · reversed (driving backwards)
 [run] ▶ »12
-[run] ▶ ↓0.6s
-[run] ▶ ↓0.6s
-[run] ▶ ↑0.6s
-[run] ▶ »6
 [run] ▶ ←0.6s
 [run] done: 9 steps in 4.6 s
 ```
-
-Speed 12 stands at the very beginning for a reason: it was put
-exactly where it changed in the original program.
 
 While the recording is running the window shows lines like these:
 
@@ -790,22 +787,33 @@ What goes into the way back:
 | a blink | a blink |
 | light and speed | they switch where you changed them |
 
-The run journal (`--log`) gets both lines: where you paused and that
-the robot came back.
-
-**The rest of the program is not driven.** After the return the run is
-over: the robot stands where it started. Want the whole program —
-press `Enter` and it drives from the very beginning (the steps never
-change).
+**If the way back finishes on its own**, it does not drive the rest of
+the program: the run is over and the robot stands where it started.
+Want the whole program — press `Enter` and it drives from the very
+beginning (the steps never change). But if you pause the way back and
+press `Enter`, the robot returns to the normal route and continues it
+from here — see the next section.
 
 If it was a one-time program (`o`), it is already gone after the
 return: `Enter` and `r`/`t` use the `p` program again.
 
-<div class="tip">
-The return is a normal run: every step of it shows in the `[run]`
-lines, and `space` pauses it again. The light after the return is
-the one that was on before the run.
-</div>
+## Back to the route: `Enter` when paused
+
+If the way back has already started and you change your mind, you do
+not have to finish it. Pause it (`space`) and press `Enter`: the
+remote first drives back what the way back has done, and then
+continues the normal program from where you stopped. `Shift+Enter`
+does the same without pauses.
+
+Example: “forward 5s, right 5s, forward 20s”. Pause at the 16th
+second of the last “forward”, then press `r`: the way back drives
+16 seconds backwards and 3 seconds of a left turn. Pause again, then
+press `Enter` — the robot turns right for 3 seconds and drives
+forward for 20 seconds: the remote glues the 16 seconds of the return
+and the remaining 4 into one step.
+
+When a normal run is paused, `Enter` also continues from here, and
+the program itself never changes.
 
 # 13. If something is wrong
 

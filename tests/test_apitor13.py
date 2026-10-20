@@ -87,7 +87,7 @@ def prog_body(frame):
 def prog_title(frame):
     """Строка-заголовок рамки программы (число шагов, скорость) или пусто."""
     for number in sorted(frame):
-        if frame[number].startswith("┌─") and "программа ·" in frame[number]:
+        if frame[number].startswith("┌─") and "программа" in frame[number]:
             return frame[number]
     return ""
 
@@ -158,6 +158,17 @@ try:
               for fragment in ("пульт:", "q — подключиться")), first)
     check("key-state warning in the log once",
           sum("[warn] key-state не включился" in row for row in first.values()) == 1, first)
+    check("remote: last program frame on top",
+          "последняя программа" in prog_title(first)
+          and "Enter нечего запускать" in prog_body(first),
+          (prog_title(first), prog_body(first)))
+    check("remote: big WASD art in the center",
+          all(any(letter in row and arrow in row for row in first.values())
+              for letter, arrow in (("W", "↑"), ("A", "←"),
+                                    ("S", "↓"), ("D", "→"))), first)
+    check("remote: action log in a frame at the bottom",
+          any(row.startswith("┌─ лог") for row in first.values())
+          and first.get(24, "").startswith("└"), first)
     check("no doubled tags anywhere", not re.search(r"\[[a-z]+\] \[[a-z]+\]", out), out)
 
     out = key("q", 0.8)
@@ -253,7 +264,11 @@ try:
     check("program row shows ↑3 after the editor",
           "↑3" in prog_row(last_screen(out)), prog_row(last_screen(out)))
 
-    key("\x1b")  # back to remote
+    out = key("\x1b")  # back to remote
+    remote = last_screen(out)
+    check("remote: frame shows the last program after returning from the editor",
+          "последняя программа" in prog_title(remote)
+          and "↑3" in prog_body(remote), (prog_title(remote), prog_body(remote), remote))
     out = key("y", 1.0)
     check("test drive logs into the TUI", "[test] тест-поездка" in out, out)
     deadline = time.time() + 20

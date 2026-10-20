@@ -405,7 +405,8 @@ try:
     check("TUI: после разового прогона — пульт",
           any(row.startswith("пульт:") for row in state.values()), state)
     check("TUI: в пульте видна программа из p",
-          any("[prog] ↑" in row for row in state.values()), state)
+          "↑3" in frame_body(state)
+          and any("последняя программа" in row for row in state.values()), state)
     state = last(tui_key("o", 0.4))
     check("TUI: разовая исчезла", "(пусто)" in frame_body(state), frame_body(state))
     tui_key("esc", 0.3)

@@ -19,7 +19,8 @@
     n ............ закончить запись макроса (то же, что Esc)
     r / R ........ проехать маршрут обратно задним ходом (R — без пауз)
     t / T ........ робота развернули рукой: проехать обратно передом
-                   (на паузе прогона r/t везут обратно только проеханную часть)
+                   (на паузе прогона r/t везут обратно только проеханную часть,
+                    Enter — продолжить обычную программу с текущего места)
     F / G ........ сохранить / загрузить программу файлом
     y ............ тест-поездка (проверить направления)
     i ............ моторы по одному (калибровка)
@@ -313,6 +314,7 @@ def _to_latin_layout(char: str) -> str:
 COUNT_KINDS = ("fwd", "back", "left", "right", "pause", "blink")
 
 MIN_STEP_SECONDS = 0.05   # «вперёд 0.05с» — короче уже не действие
+MIN_PAUSE_SECONDS = 0.1   # паузы короче 100 мс не пишем: только шумят
 MAX_STEP_SECONDS = 600.0  # и длиннее тоже (10 минут)
 STEP_PRECISION = 3        # секунды храним до миллисекунд (1.234)
 
@@ -521,24 +523,106 @@ class _RunAbort(Exception):
     """Программа прервана (Esc — в пульт, p — в режим программы, отключение или потеря связи)."""
 
 
+class ResumeInfo:
+    """Где остановился прогон и что делать, если на паузе нажать Enter.
+
+    steps — программа, которая выполнялась; index — шаг в ней (0-based),
+    used — сколько секунд этого шага уже проехали. speed/led — скорость и
+    цвет, которые были включены к моменту паузы (для продолжения с места).
+    """
+    __slots__ = ("steps", "index", "used", "editor", "source", "speed", "led",
+                 "repeat", "rep")
+
+    def __init__(self, steps, index: int, used: float, editor,
+                 source: str = "editor", speed: int | None = None,
+                 led: int | None = None, repeat: int = 1,
+                 rep: int = 1) -> None:
+        self.steps = [Step(s.kind, s.value, s.seconds) for s in steps]
+        self.index = max(0, min(int(index), len(self.steps)))
+        self.used = max(0.0, float(used))
+        self.editor = editor
+        self.source = source
+        self.speed = speed
+        self.led = led
+        self.repeat = max(1, int(repeat))
+        self.rep = max(1, min(int(rep), self.repeat))
+
+    def remaining(self) -> list[Step]:
+        """Остаток текущего круга от точки паузы (шаг и всё, что после него)."""
+        if self.index >= len(self.steps):
+            return []
+        current = self.steps[self.index]
+        duration = self.editor._step_seconds(current)
+        out: list[Step] = []
+        used = min(self.used, duration)
+        if current.kind in MOVE_VECTORS:
+            left = duration - used
+            if left >= MIN_STEP_SECONDS:
+                out.append(Step(current.kind, 1,
+                                round(left, STEP_PRECISION)))
+        elif current.kind == "pause":
+            left = duration - used
+            if left >= MIN_PAUSE_SECONDS:
+                out.append(Step("pause", 1, round(left, STEP_PRECISION)))
+        # blink/color/speed не делятся на секунды: начатый шаг пропускаем,
+        # а всё после него проедем как обычно.
+        out.extend(Step(s.kind, s.value, s.seconds)
+                   for s in self.steps[self.index + 1:])
+        return merge_moves(out)
+
+    def remaining_all(self) -> list[Step]:
+        """Остаток текущего круга и все оставшиеся повторы программы."""
+        out = self.remaining()
+        for _ in range(self.repeat - self.rep):
+            out.extend(Step(s.kind, s.value, s.seconds)
+                       for s in self.steps)
+        return merge_moves(out)
+
+
+def merge_moves(steps: list[Step]) -> list[Step]:
+    """Склеить соседние движения одного вида: ↑16с + ↑4с → ↑20с."""
+    out: list[Step] = []
+    for step in steps:
+        if (out and step.kind in MOVE_VECTORS and out[-1].kind == step.kind
+                and step.seconds is not None and out[-1].seconds is not None):
+            out[-1] = Step(step.kind, 1, round(
+                out[-1].seconds + step.seconds, STEP_PRECISION))
+        else:
+            out.append(Step(step.kind, step.value, step.seconds))
+    return out
+
+
+def route_end_state(steps: list[Step], speed: int,
+                    led: int | None) -> tuple[int, int | None]:
+    """Скорость и цвет в конце готового маршрута."""
+    for step in steps:
+        if step.kind == "speed":
+            speed = max(SPEED_MIN, min(SPEED_MAX, step.value))
+        elif step.kind == "color":
+            led = step.value
+    return speed, led
+
+
 class RunPlan:
     """Что запускаем: готовые шаги, скорость, повтор и вид прогона.
 
     rev — None (обычный прогон), "back" (обратно задним ходом) или "front"
     (робота развернули рукой); drop_pauses — прогон без пауз;
-    partial — реверс только проеханной части (r/t на паузе).
+    partial — реверс только проеханной части (r/t на паузе) или продолжение
+    обычной программы с места (Enter на паузе).
 
     editor — чей это маршрут (обычная программа или разовая), source —
     "editor" или "once": по нему прогон берёт длительности шагов, а после
-    разового прогона чистит разовую программу.
+    разового прогона чистит разовую программу. origin — точка, с которой
+    начался реверс: по ней Enter на паузе возвращается на обычный маршрут.
     """
     __slots__ = ("steps", "speed", "repeat", "rev", "drop_pauses", "partial",
-                 "editor", "source")
+                 "editor", "source", "origin")
 
     def __init__(self, steps: list[Step], speed: int, repeat: int,
                  rev: str | None = None, drop_pauses: bool = False,
                  partial: bool = False, editor=None,
-                 source: str = "editor") -> None:
+                 source: str = "editor", origin: ResumeInfo | None = None) -> None:
         self.steps = steps
         self.speed = speed
         self.repeat = repeat
@@ -547,6 +631,7 @@ class RunPlan:
         self.partial = partial
         self.editor = editor
         self.source = source
+        self.origin = origin
 
 
 class ProgramEditor:
@@ -1311,6 +1396,14 @@ def _truncate(text: str, width: int) -> str:
     return text[: max(0, width - 1)] + "…"
 
 
+_ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+
+
+def _visible_len(text: str) -> int:
+    """Длина строки на экране, без ANSI-последовательностей."""
+    return len(_ANSI_RE.sub("", text))
+
+
 def _wrap_words(text: str, width: int, rows: int) -> list[str]:
     """Разложить текст по словам на строки (не больше rows — хвост обрезаем)."""
     lines: list[str] = []
@@ -1344,18 +1437,23 @@ def _enable_windows_ansi() -> None:
 
 
 class Tui:
-    """Полноэкранный интерфейс пульта (--tui): баннер, лог, строка программы.
+    """Полноэкранный интерфейс пульта (TUI по умолчанию).
 
     Рисуется ANSI-последовательностями на альтернативном экране. Сверху —
     постоянный баннер: состояние (робот, связь, скорость, режим движения,
-    key-state, свет) и клавиши текущего режима; в середине — лог событий;
-    снизу — строка программы и приглашение ввода (когда пульт что-то
-    спрашивает). Сообщения приходят в note() вместо обычной печати, поэтому
-    вывод не разъезжается по экрану; при выходе терминал возвращается как был.
+    key-state, свет) и клавиши текущего режима. В пульте под баннером —
+    рамка последней программы (что запустит Enter), в центре — большая
+    схема WASD, внизу — лог действий в отдельной рамке. В редакторе,
+    разовой программе и прогоне — прежний вид: лог, рамка программы и
+    приглашение ввода. Сообщения приходят в note() вместо обычной печати,
+    поэтому вывод не разъезжается по экрану; при выходе терминал
+    возвращается как был.
     """
 
     MAX_LOG = 400  # сколько строк лога помнить
     BANNER_ROWS = 2  # сколько строк занимает баннер с клавишами режима
+    LOG_MAX_ROWS = 8  # рамка лога в пульте: не выше, чтобы WASD оставался крупным
+    LOG_MIN_ROWS = 3  # рамка лога: верх, хотя бы одна строка, низ
     TAG_COLORS = {
         "err": "31", "warn": "33", "ok": "32", "info": "36", "hint": "2;37",
         "robot": "36", "motor": "35", "test": "36", "led": "1;33",
@@ -1454,7 +1552,12 @@ class Tui:
 
     # -- сборка кадра -------------------------------------------------------- #
     def _render(self, width: int, height: int) -> list[str]:
+        """Собрать кадр: в пульте своя раскладка, в остальных режимах прежняя."""
         prompt = self.remote.prompt is not None
+        if self.remote.mode == "remote" and not self.remote.recording:
+            rows = self._render_remote(width, height, prompt)
+            if rows is not None:
+                return rows
         # Шапка — постоянный баннер: состояние (строка 1) и клавиши текущего
         # режима (строки 2+); снизу — программа и приглашение ввода.
         banner = self._mode_banner(width)
@@ -1477,6 +1580,118 @@ class Tui:
             rows.append(self._bar(self._prompt_line(), width, "7"))
         return rows
 
+    def _render_remote(self, width: int, height: int, prompt: bool) -> list[str] | None:
+        """Кадр пульта: последняя программа сверху, WASD в центре, лог внизу.
+
+        None — экран слишком низкий для рамок: _render нарисует прежний
+        компактный вид.
+        """
+        banner = self._mode_banner(width)
+        frame = self._remote_program_block(width)
+        fixed = 1 + len(banner) + len(frame) + (1 if prompt else 0)
+        budget = height - fixed
+        if budget < self.LOG_MIN_ROWS:
+            return None
+        # Сначала пробуем оставить логу 5 строк (рамка + 3 строки текста),
+        # и только на низком экране довольствуемся минимумом.
+        art = self._wasd_art(width, budget - 5)
+        if not art:
+            art = self._wasd_art(width, budget - self.LOG_MIN_ROWS)
+        log_rows = min(self.LOG_MAX_ROWS, budget - len(art))
+        log_rows = max(self.LOG_MIN_ROWS, log_rows)
+        art_rows = height - fixed - log_rows
+        top = max(0, (art_rows - len(art)) // 2)
+        bottom = max(0, art_rows - len(art) - top)
+        rows = [self._bar(self._status_line(), width, "7")]
+        rows += [self._bar(line, width, "2") for line in banner]
+        rows += frame
+        rows += [""] * top
+        rows += [self._center_art(line, width) for line in art]
+        rows += [""] * bottom
+        rows += self._log_block(width, log_rows)
+        if prompt:
+            rows.append(self._bar(self._prompt_line(), width, "7"))
+        return rows
+
+    def _wasd_art(self, width: int, height: int) -> list[str]:
+        """Схема WASD: четыре квадрата перевёрнутой буквой T.
+
+        W сверху, A/S/D снизу; в каждом квадрате буква и стрелка. Квадраты
+        крупнее на большом экране; на узком или низком остаётся одна строка.
+        """
+        for box_w, box_h in ((15, 7), (13, 5), (9, 3)):
+            art_w = box_w * 3 + 2
+            art_h = box_h * 2 + 1
+            if art_w <= width and art_h <= height:
+                top = self._key_box("W", "↑", box_w, box_h)
+                left = self._key_box("A", "←", box_w, box_h)
+                middle = self._key_box("S", "↓", box_w, box_h)
+                right = self._key_box("D", "→", box_w, box_h)
+                bottom = [a + " " + s + " " + d
+                          for a, s, d in zip(left, middle, right)]
+                pad = " " * ((art_w - box_w) // 2)
+                return [pad + row + pad for row in top] + [""] + bottom
+        if height >= 1 and width >= 14:
+            return ["W↑  A←  S↓  D→"]
+        return []
+
+    @staticmethod
+    def _key_box(letter: str, arrow: str, width: int, height: int) -> list[str]:
+        """Квадрат с буквой и стрелкой по центру."""
+        inner = width - 2
+        text = f"{letter}   {arrow}"
+        left = max(0, (inner - len(text)) // 2)
+        middle = (" " * left + text).ljust(inner)[:inner]
+        top = "┌" + "─" * inner + "┐"
+        bottom = "└" + "─" * inner + "┘"
+        body = []
+        for index in range(height - 2):
+            fill = middle if index == (height - 2) // 2 else " " * inner
+            body.append("│" + fill + "│")
+        return [top] + body + [bottom]
+
+    @staticmethod
+    def _center_art(line: str, width: int) -> str:
+        """Поставить строку схемы по центру экрана."""
+        if not line:
+            return ""
+        pad = max(0, (width - len(line)) // 2)
+        return " " * pad + f"\x1b[1;36m{line}\x1b[0m"
+
+    def _remote_program_block(self, width: int) -> list[str]:
+        """Рамка последней программы в пульте — то, что запустит Enter."""
+        remote = self.remote
+        title = tr("последняя программа", "last program")
+        if remote.editor.steps and remote.program_name:
+            title += f" «{remote.program_name}»"
+        empty = tr("(пусто) · Enter нечего запускать",
+                   "(empty) · nothing for Enter to run")
+        return self._program_frame(remote.editor, title, width,
+                                   cursor=False, empty=empty)
+
+    def _log_block(self, width: int, rows: int) -> list[str]:
+        """Лог действий в отдельной рамке внизу (режим пульта)."""
+        if rows < 2:
+            return []
+        title = _truncate(tr("лог", "log"), max(1, width - 5))
+        top = (f"\x1b[2;36m┌─ \x1b[0;1;36m{title}\x1b[0;2;36m "
+               + "─" * max(0, width - 5 - len(title))
+               + "┐\x1b[0m")
+        inner = max(1, width - 2)
+        text_width = max(1, inner - 2)
+        body_rows = rows - 2
+        lines = self._log_lines(text_width)[-body_rows:] if body_rows else []
+        blank = (f"\x1b[2;36m│\x1b[0m " + " " * text_width
+                 + " \x1b[2;36m│\x1b[0m")
+        out = [top]
+        out += [blank] * max(0, body_rows - len(lines))
+        for line in lines:
+            pad = " " * max(0, text_width - _visible_len(line))
+            out.append(f"\x1b[2;36m│\x1b[0m {line}{pad} "
+                       f"\x1b[2;36m│\x1b[0m")
+        out.append(f"\x1b[2;36m└" + "─" * inner + "┘\x1b[0m")
+        return out
+
     def _program_block(self, width: int) -> list[str]:
         """Программа в рамке — в режимах программы и разовой программы.
 
@@ -1491,6 +1706,11 @@ class Tui:
         editor = remote.once_editor if remote.mode == "once" else remote.editor
         title = (tr("разовая программа", "one-time program")
                  if remote.mode == "once" else tr("программа", "program"))
+        return self._program_frame(editor, title, width)
+
+    def _program_frame(self, editor, title: str, width: int, *,
+                       cursor: bool = True, empty: str | None = None) -> list[str]:
+        """Рамка программы: заголовок с шагами/временем и строка шагов."""
         n = len(editor.steps)
         count = (f"{n}/{editor.max_steps} {steps_word(n)}"
                  if editor.max_steps else f"{n} {steps_word(n)}")
@@ -1509,8 +1729,10 @@ class Tui:
                 words = [f"…+{len(words) - 10}"] + words[-10:]
             body = " · ".join(words)
         else:
-            body = tr("(пусто)", "(empty)")
-        body = _truncate(body + " ▏", inner)
+            body = empty or tr("(пусто)", "(empty)")
+        if cursor:
+            body += " ▏"
+        body = _truncate(body, inner)
         body_row = (f"\x1b[36m│\x1b[1;37m{body.ljust(inner)[:inner]}"
                     f"\x1b[0;36m│\x1b[0m")
         bottom = f"\x1b[36m└" + "─" * inner + "┘\x1b[0m"
@@ -1732,6 +1954,7 @@ class Remote:
         self._run_abort: str | None = None  # remote | editor | partial
         self._run_step = 0
         self._run_total = 0
+        self._run_rep = 1                       # текущий круг (1-based)
         self._run_done: list[Step] = []        # шаги, проеханные полностью
         self._run_current: Step | None = None  # шаг, на котором стоим сейчас
         self._run_progress = 0.0               # сколько секунд его проехали
@@ -2435,10 +2658,10 @@ class Remote:
         if self.mode == "once":
             return self._once_hint()
         if self.mode == "run":
-            return tr("пробел — пауза/продолжить · на паузе r/t — обратно по проеханному · "
-                      "Esc — стоп · p — редактор программы",
-                      "space — pause/resume · r/t when paused — drive back what was done · "
-                      "Esc — stop · p — program editor")
+            return tr("пробел — пауза/продолжить · Enter на паузе — с места · "
+                      "r/t — обратно по проеханному · Esc — стоп · p — редактор",
+                      "space — pause/resume · Enter when paused — from here · "
+                      "r/t — drive back what was done · Esc — stop · p — editor")
         return tr("q — подключиться · Shift+Q — отключиться · w/a/s/d — ехать · "
                   "Enter — пуск · пробел — стоп · m — макрос · p — программа · "
                   "o — разово · r/t — обратно · h — все клавиши · Ctrl+C — выход",
@@ -2474,7 +2697,10 @@ class Remote:
         )
         self._say("info", tr(f"скорость {self.speed}, режим: {mode}",
                              f"speed {self.speed}, mode: {mode}"))
-        self._say("hint", self._keys_hint())
+        # В TUI эти же клавиши уже в баннере над логом; не тратим на них
+        # строки лога (в пульте рамка лога небольшая). В --no-tui печатаем.
+        if self.tui is None or not self.tui.active:
+            self._say("hint", self._keys_hint())
 
     def _print_help(self) -> None:
         if self.mode == "editor":
@@ -2516,7 +2742,8 @@ class Remote:
                 "                R — the same without pauses",
                 "  t / T         the robot was turned around by hand: t — drive it",
                 "                back, T — the same without pauses",
-                "                on a paused run r/t drive back only what was done",
+                "                on a paused run r/t drive back only what was done,",
+                "                Enter — continue the normal program from here",
                 "  F / G         save / load a program file",
                 "  y             test drive: forward, back, left, right",
                 "  i             spin motors 1, 2, 3 one by one (calibration)",
@@ -2562,7 +2789,8 @@ class Remote:
                 "                R — то же самое, но без пауз",
                 "  t / T         робота развернули рукой: t — проехать обратно передом,",
                 "                T — то же самое, но без пауз",
-                "                на паузе прогона r/t везут обратно только проеханное",
+                "                на паузе прогона r/t везут обратно только проеханное,",
+                "                Enter — продолжить обычную программу с текущего места",
                 "  F / G         сохранить / загрузить программу файлом",
                 "  y             тест-поездка: вперёд, назад, влево, вправо",
                 "  i             крутить моторы 1, 2, 3 по очереди (калибровка)",
@@ -3054,6 +3282,10 @@ class Remote:
         if key == "s-enter" or (key == "enter" and self._shift_held()):
             # Shift+Enter: прогон без пауз. Shift приходит из key-state,
             # а если его нет — из самого терминала (CSI-u, см. выше).
+            # На паузе прогона — продолжение с места тоже без пауз.
+            if self.mode == "run" and self._run_paused:
+                await self._partial_resume(drop_pauses=True)
+                return True
             await self._on_run_key(
                 drop_pauses=True,
                 source="once" if self.mode == "once" else "editor",
@@ -3113,17 +3345,22 @@ class Remote:
             if self._run_paused:
                 self._say("run", tr("пауза", "paused"))
                 self._say("hint", tr(
-                    "пробел — продолжить · r/t — обратно по проеханному · Esc — стоп",
-                    "space — resume · r/t — drive back what was done · Esc — stop",
+                    "пробел — продолжить · Enter — с места · "
+                    "r/t — обратно по проеханному · Esc — стоп",
+                    "space — resume · Enter — from here · "
+                    "r/t — drive back what was done · Esc — stop",
                 ))
             else:
                 # Пауза снята до того, как старый прогон успел остановиться:
-                # отменяем отложенный частичный реверс, иначе он стартовал бы
-                # поверх только что продолженного прогона.
-                if self._run_abort == "partial":
+                # отменяем отложенный реверс/продолжение, иначе он стартовал
+                # бы поверх только что продолженного прогона.
+                if self._run_abort in ("partial", "resume"):
                     self._run_abort = None
                 self._partial_pending = False
                 self._say("run", tr("продолжаю", "resuming"))
+            return True
+        if key == "enter" and self._run_paused:
+            await self._partial_resume()
             return True
         if key == "esc":
             self._run_abort = "remote"  # Esc: прервать и вернуться в пульт
@@ -3137,6 +3374,106 @@ class Remote:
             await self._partial_reverse(key)
             return True
         return False
+
+    def _resume_info_from_run(self) -> ResumeInfo | None:
+        """Точка паузы текущего прогона: что и с какого места продолжать."""
+        plan = self._run_plan
+        if plan is None:
+            return None
+        index = self._run_step - 1
+        used = self._run_progress
+        if self._run_current is None:
+            # Пауза между шагами: следующий шаг ещё не начат.
+            index = self._run_step
+            used = 0.0
+        return ResumeInfo(
+            plan.steps, index, used,
+            plan.editor or self._run_editor,
+            plan.source,
+            speed=self.speed,
+            led=NUMBER_BY_COLOR.get(self._run_led),
+            repeat=plan.repeat,
+            rep=self._run_rep,
+        )
+
+    def _resume_plan(self, drop_pauses: bool = False) -> RunPlan | None:
+        """Собрать обычное продолжение с точки паузы.
+
+        Для обычного прогона — остаток текущего шага и всё после него.
+        Для реверса — сначала обратный проход по уже проеханной обратной
+        части (он возвращает на обычный маршрут), затем остаток исходной
+        программы от точки, где этот реверс начался.
+        """
+        plan = self._run_plan
+        if plan is None:
+            return None
+        editor = plan.editor or self._run_editor
+        if plan.rev is None:
+            info = self._resume_info_from_run()
+            steps = info.remaining_all() if info else []
+            speed = self.speed
+        else:
+            prefix = [Step(s.kind, s.value, s.seconds)
+                      for s in self._run_done]
+            current = self._run_current
+            if current is not None and current.kind in MOVE_VECTORS:
+                duration = editor._step_seconds(current)
+                seconds = min(max(self._run_progress, 0.0), duration,
+                              MAX_STEP_SECONDS)
+                if seconds >= MIN_STEP_SECONDS:
+                    prefix.append(Step(current.kind, 1,
+                                       round(seconds, STEP_PRECISION)))
+            undo = reversed_steps(editor, plan.rev,
+                                  drop_pauses=plan.drop_pauses, steps=prefix)
+            rest = plan.origin.remaining_all() if plan.origin else []
+            if rest and plan.origin is not None:
+                # После обратного прохода возвращаем скорость и цвет,
+                # которые были на обычном маршруте в точке паузы.
+                end_speed, end_led = route_end_state(
+                    undo, plan.speed, plan.origin.led)
+                if (plan.origin.speed is not None
+                        and end_speed != plan.origin.speed):
+                    undo.append(Step("speed", plan.origin.speed))
+                if (plan.origin.led is not None
+                        and end_led != plan.origin.led):
+                    undo.append(Step("color", plan.origin.led))
+            steps = merge_moves(undo + rest)
+            speed = plan.speed
+        if drop_pauses:
+            steps = [s for s in steps if s.kind != "pause"]
+        if not steps:
+            return None
+        return RunPlan(steps, speed, 1, None, drop_pauses, partial=True,
+                       editor=editor, source=plan.source)
+
+    async def _partial_resume(self, drop_pauses: bool = False) -> None:
+        """Enter/Shift+Enter на паузе: продолжить обычную программу с места."""
+        if not self._run_paused:
+            return
+        if self._partial_pending:
+            self._say("hint", tr(
+                "уже останавливаю прогон — секунду",
+                "already stopping the run — one moment",
+            ))
+            return
+        plan = self._resume_plan(drop_pauses)
+        if plan is None:
+            self._say("warn", tr(
+                "продолжать нечего — маршрут уже проехан",
+                "nothing left to continue — the route is already done",
+            ))
+            return
+        self._run_abort = "resume"
+        self._partial_pending = True
+        self._say("run", tr(
+            "останавливаю прогон — сейчас продолжу с текущего места",
+            "stopping the run — continuing from here",
+        ))
+        task = self._run_task
+        if task is None or task.done():
+            self._launch_run(plan)
+            return
+        asyncio.create_task(self._finish_partial(task, plan))
 
     async def _partial_reverse(self, key: str) -> None:
         """r/t на паузе: вернуть робота по уже проеханной части программы."""
@@ -3171,7 +3508,8 @@ class Remote:
             return
         plan = RunPlan(steps, editor.speed, 1, mode,
                        drop_pauses=drop_pauses, partial=True,
-                       editor=editor, source=source)
+                       editor=editor, source=source,
+                       origin=self._resume_info_from_run())
         # Останавливаем текущий прогон и запускаем встречный по проеханному.
         self._run_abort = "partial"
         self._partial_pending = True
@@ -3188,7 +3526,7 @@ class Remote:
         asyncio.create_task(self._finish_partial(task, plan))
 
     async def _finish_partial(self, task: asyncio.Task, plan: RunPlan) -> None:
-        """Дождаться остановки старого прогона и запустить встречный."""
+        """Дождаться остановки старого прогона и запустить следующий."""
         try:
             await asyncio.wait_for(task, 3.0)
         except asyncio.TimeoutError:
@@ -3199,6 +3537,7 @@ class Remote:
             self._run_task = None
             self._run_plan = None
             self._run_abort = None
+            self._run_rep = 1
             self._run_paused = False
             self._partial_pending = False
             self._run_source = "editor"
@@ -3217,8 +3556,8 @@ class Remote:
         if not self._is_connected():
             self._partial_pending = False
             self._say("warn", tr(
-                "связь с роботом потеряна — обратно не поехали",
-                "the robot is no longer connected — did not drive back",
+                "связь с роботом потеряна — следующий прогон не начат",
+                "the robot is no longer connected — the next run was not started",
             ))
             return
         self._launch_run(plan)
@@ -3555,10 +3894,20 @@ class Remote:
                 self._say("warn", tr("в программе одни паузы — ехать некуда",
                                      "the program is all pauses — nothing to drive"))
                 return
+        origin = None
+        if rev is not None:
+            # Полный реверс начинается с конца программы: после него
+            # продолжать обычный маршрут уже нечего.
+            origin = ResumeInfo(
+                editor.steps, len(editor.steps), 0.0, editor, source,
+                speed=editor.speed,
+                led=NUMBER_BY_COLOR.get(self.led_color),
+            )
         self._launch_run(RunPlan(
             steps, editor.speed,
             1 if rev is not None else max(1, editor.repeat),
             rev, drop_pauses, editor=editor, source=source,
+            origin=origin,
         ))
 
     def _launch_run(self, plan: RunPlan) -> None:
@@ -3650,6 +3999,7 @@ class Remote:
         run_led = self.led_color
         self._run_total = total
         self._run_step = 0
+        self._run_rep = 1
         self._run_done = []
         self._run_current = None
         self._run_progress = 0.0
@@ -3668,6 +4018,8 @@ class Remote:
                            " · reversed: the part already done (robot turned around)")
             else:
                 head += tr(" · реверс передом (робот развёрнут)", " · reversed (robot turned around)")
+        elif plan.partial:
+            head += tr(" · продолжение с места", " · resumed from here")
         elif steps_are_timed(steps):
             head += tr(" · макрос", " · macro")
         if plan.source == "once":
@@ -3678,12 +4030,15 @@ class Remote:
             head += tr(f" · повтор {repeat}", f" · repeat {repeat}")
         self._say("run", head)
         self._say("hint", tr(
-            "пробел — пауза/продолжить, на паузе r/t — обратно по проеханному, Esc — стоп",
-            "space — pause/resume, r/t when paused — drive back what was done, Esc — stop"))
+            "пробел — пауза/продолжить, на паузе Enter — с места, "
+            "r/t — обратно по проеханному, Esc — стоп",
+            "space — pause/resume, Enter when paused — from here, "
+            "r/t — drive back what was done, Esc — stop"))
         await self._led_flash(Color.GREEN, 0.35, run_led)
         finished = False
         try:
             for rep in range(1, repeat + 1):
+                self._run_rep = rep
                 for idx, step in enumerate(steps, 1):
                     self._run_step = idx
                     self._check_run()
@@ -3770,6 +4125,14 @@ class Remote:
                 ))
                 result = tr(f"пауза на шаге {self._run_step}/{total}",
                             f"paused at step {self._run_step}/{total}")
+            elif self._run_abort == "resume":
+                self.mode = "remote"
+                self._say("run", tr(
+                    f"пауза на шаге {self._run_step} из {total} — продолжаю с места",
+                    f"paused at step {self._run_step} of {total} — continuing from here",
+                ))
+                result = tr(f"продолжение с шага {self._run_step}/{total}",
+                            f"continued from step {self._run_step}/{total}")
             else:
                 self.mode = "remote"
                 self._say("run", tr(
@@ -3785,12 +4148,14 @@ class Remote:
         if self._is_connected():
             await self._call(self.robot.all_leds, prev_led)
         # Разовая программа исполнена (или прервана) и больше не нужна.
-        # При частичном реверсе её ещё доезжает встречный прогон — не чистим.
-        if plan.source == "once" and self._run_abort != "partial":
+        # При частичном реверсе/продолжении её ещё доезжает следующий
+        # прогон — не чистим.
+        if plan.source == "once" and self._run_abort not in ("partial", "resume"):
             self.once_editor.clear()
         self._run_paused = False
         self._run_abort = None
         self._run_plan = None
+        self._run_rep = 1
         self._run_source = "editor"
         self._run_editor = self.editor
         self._run_task = None
