@@ -326,16 +326,19 @@ How to move around:
 | `Enter` | when paused: continue from here |
 | `r` `t` | in the remote: drive the route back (section 12, page {{page:12}}) |
 
-A trick: if you press `p` while the robot is driving, the remote stops it
-and opens the program. You can leave the program mode only with `Esc` —
-pressing `p` inside the program does nothing. No accidental way out.
+A trick: `p` while driving stops the robot and opens the program; you
+can leave it only with `Esc` — no accidental way out.
 
 During a run: `space` pauses and resumes, `Esc` stops and returns to the
 remote, `p` stops and goes straight to editing the program.
 
-The LED shows the state: one green flash — start, two green flashes —
-finish, red — the program was interrupted. After the finish the previous
-colour comes back.
+During a run a car drives along the top with a seconds counter; below,
+grey `✓` boxes move up, the yellow `▶` box stays in the middle and blue
+boxes wait below. Each box shows the action and amount; repeats number
+every lap (`4/12`).
+
+LED: one green flash — start, two — finish, red — interrupted; the
+previous colour returns after the finish.
 
 # 7. Your first program
 

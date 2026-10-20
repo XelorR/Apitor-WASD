@@ -120,6 +120,7 @@ import tempfile
 import textwrap
 import threading
 import time
+import unicodedata
 from collections import deque
 from pathlib import Path
 
@@ -1404,6 +1405,27 @@ def _visible_len(text: str) -> int:
     return len(_ANSI_RE.sub("", text))
 
 
+def _display_width(text: str) -> int:
+    """Ширина строки в колонках терминала (эмодзи и CJK занимают две).
+
+    Для рамок и обычного текста хватает len(); это нужно для машинки на
+    прогресс-баре: «🚗» — один символ Python, но две колонки на экране.
+    Управляющие ANSI-коды не считаются, вариационные селекторы и сочетаемые
+    знаки — тоже.
+    """
+    width = 0
+    for char in _ANSI_RE.sub("", text):
+        if char in "\ufe0e\ufe0f\u200d" or unicodedata.combining(char):
+            continue
+        width += 2 if unicodedata.east_asian_width(char) in ("W", "F") else 1
+    return width
+
+
+def _pad_display(text: str, width: int) -> str:
+    """Дополнить строку пробелами до width с учётом ширины эмодзи."""
+    return text + " " * max(0, width - _display_width(text))
+
+
 def _wrap_words(text: str, width: int, rows: int) -> list[str]:
     """Разложить текст по словам на строки (не больше rows — хвост обрезаем)."""
     lines: list[str] = []
@@ -1443,10 +1465,12 @@ class Tui:
     постоянный баннер: состояние (робот, связь, скорость, режим движения,
     key-state, свет) и клавиши текущего режима. В пульте под баннером —
     рамка последней программы (что запустит Enter), в центре — большая
-    схема WASD, внизу — лог действий в отдельной рамке. В редакторе,
-    разовой программе и прогоне — прежний вид: лог, рамка программы и
-    приглашение ввода. Сообщения приходят в note() вместо обычной печати,
-    поэтому вывод не разъезжается по экрану; при выходе терминал
+    схема WASD, внизу — лог действий в отдельной рамке. В прогоне — своя
+    раскладка: сверху прогресс-бар с едущей машинкой, ниже цепочка рамок
+    с шагами (текущий всегда в центре), без лога и рамки программы.
+    В редакторе и разовой программе — прежний вид: лог, рамка программы
+    и приглашение ввода. Сообщения приходят в note() вместо обычной
+    печати, поэтому вывод не разъезжается по экрану; при выходе терминал
     возвращается как был.
     """
 
@@ -1454,6 +1478,9 @@ class Tui:
     BANNER_ROWS = 2  # сколько строк занимает баннер с клавишами режима
     LOG_MAX_ROWS = 8  # рамка лога в пульте: не выше, чтобы WASD оставался крупным
     LOG_MIN_ROWS = 3  # рамка лога: верх, хотя бы одна строка, низ
+    RUN_BOX_ROWS = 3  # рамка шага: верх, действие, низ
+    RUN_BOX_GAP = 0   # рамки вплотную: на 24 строках видно больше шагов
+    RUN_BOX_MAX = 48  # самая широкая рамка шага
     TAG_COLORS = {
         "err": "31", "warn": "33", "ok": "32", "info": "36", "hint": "2;37",
         "robot": "36", "motor": "35", "test": "36", "led": "1;33",
@@ -1510,11 +1537,16 @@ class Tui:
         self._resized = True
 
     async def _ticker(self) -> None:
-        """Перерисовать кадр, если терминал поменял размер."""
+        """Перерисовать кадр при смене размера или во время прогона.
+
+        Прогон рисует движущуюся машинку и текущий шаг, поэтому кадр нужно
+        обновлять чаще, чем приходят клавиши: иначе прогресс замирает до
+        следующего нажатия.
+        """
         with contextlib.suppress(asyncio.CancelledError):
             while True:
                 await asyncio.sleep(0.2)
-                if self._resized:
+                if self._resized or self.remote.mode == "run":
                     self._resized = False
                     self.redraw()
 
@@ -1552,8 +1584,12 @@ class Tui:
 
     # -- сборка кадра -------------------------------------------------------- #
     def _render(self, width: int, height: int) -> list[str]:
-        """Собрать кадр: в пульте своя раскладка, в остальных режимах прежняя."""
+        """Собрать кадр: у пульта и прогона своя раскладка, иначе прежняя."""
         prompt = self.remote.prompt is not None
+        if self.remote.mode == "run":
+            rows = self._render_run(width, height, prompt)
+            if rows is not None:
+                return rows
         if self.remote.mode == "remote" and not self.remote.recording:
             rows = self._render_remote(width, height, prompt)
             if rows is not None:
@@ -1612,6 +1648,169 @@ class Tui:
         if prompt:
             rows.append(self._bar(self._prompt_line(), width, "7"))
         return rows
+
+    def _render_run(self, width: int, height: int, prompt: bool) -> list[str] | None:
+        """Кадр прогона: прогресс-бар с машинкой, шапка и цепочка шагов.
+
+        Текущий шаг всегда стоит в середине цепочки, поэтому экран как бы
+        прокручивается: выполненный уходит вверх, следующий занимает его
+        место. Внизу ничего нет — вместо лога и рамки программы всё место
+        отдано шагам; баннер уже показывает клавиши, а отчёт останется
+        в логе после возвращения в пульт.
+        """
+        banner = self._mode_banner(width)
+        fixed = 2 + len(banner) + (1 if prompt else 0)
+        chain_rows = height - fixed
+        if chain_rows < self.RUN_BOX_ROWS:
+            return None
+        rows = [self._run_progress_line(width),
+                self._bar(self._status_line(), width, "7")]
+        rows += [self._bar(line, width, "2") for line in banner]
+        rows += self._run_chain(width, chain_rows, screen_top=len(rows),
+                                screen_height=height)
+        if prompt:
+            rows.append(self._bar(self._prompt_line(), width, "7"))
+        return rows
+
+    def _run_chain_steps(self) -> list[Step]:
+        """Все шаги прогона подряд, с учётом повторов.
+
+        _run_done копит полностью проеханные шаги через все круги, поэтому
+        развёрнутый список совпадает с ним один к одному: его длина и есть
+        номер текущего шага.
+        """
+        plan = getattr(self.remote, "_run_plan", None)
+        if plan is None:
+            return []
+        repeat = max(1, int(getattr(plan, "repeat", 1) or 1))
+        return list(plan.steps) * repeat
+
+    def _run_seconds(self) -> tuple[float, float]:
+        """Сколько секунд маршрута уже проехано и сколько запланировано."""
+        remote = self.remote
+        plan = getattr(remote, "_run_plan", None)
+        if plan is None:
+            return 0.0, 0.0
+        editor = (plan.editor or getattr(remote, "_run_editor", None)
+                  or remote.editor)
+        total = float(getattr(remote, "_run_planned", 0.0) or 0.0)
+        if total <= 0:
+            total = (sum(editor._step_seconds(s) for s in plan.steps)
+                     * max(1, int(getattr(plan, "repeat", 1) or 1)))
+        done = sum(editor._step_seconds(s)
+                   for s in getattr(remote, "_run_done", []))
+        current = getattr(remote, "_run_current", None)
+        if current is not None:
+            used = max(0.0, float(getattr(remote, "_run_progress", 0.0) or 0.0))
+            done += min(used, editor._step_seconds(current))
+        return max(0.0, min(done, total)), max(0.0, total)
+
+    def _run_progress_line(self, width: int) -> str:
+        """Дорога с едущей машинкой и счётчик секунд.
+
+        Машинка стоит на месте, пропорциональном проеханным секундам, а не
+        номеру шага: пауза и мигание тоже занимают время. Поэтому её
+        положение совпадает с «X / Y с» рядом.
+        """
+        done, total = self._run_seconds()
+        info = f"{done:.1f} / {total:.1f} {tr('с', 's')}"
+        if _display_width(info) + 6 > width:
+            info = f"{done:.0f}/{total:.0f}"
+        car = "🚗"
+        car_w = _display_width(car)
+        bar = max(car_w + 2, width - _display_width(info) - 1)
+        fraction = done / total if total > 0 else 0.0
+        pos = int(round(max(0.0, min(1.0, fraction)) * (bar - car_w)))
+        pos = max(0, min(bar - car_w, pos))
+        before = "━" * pos
+        after = "─" * max(0, bar - pos - car_w)
+        line = (f"\x1b[32m{before}\x1b[1;33m{car}\x1b[2;37m{after}"
+                f"\x1b[0m \x1b[2;37m{info}\x1b[0m")
+        return _pad_display(line, width)
+
+    def _run_caption(self, step: Step) -> str:
+        """Действие и количество для рамки шага: «↑ вперёд · 5»."""
+        word = _STEP_WORDS[step.kind][LANG]
+        if step.seconds is not None:
+            amount = f"{secs_text(step.seconds)} {tr('с', 's')}"
+        else:
+            amount = str(step.value)
+        return f"{_STEP_SYMBOLS[step.kind]} {word} · {amount}"
+
+    def _run_chain(self, width: int, rows: int, *, screen_top: int = 0,
+                   screen_height: int | None = None) -> list[str]:
+        """Цепочка шагов: текущий в центре, прошедшие вверх, будущие вниз."""
+        canvas = [""] * rows
+        steps = self._run_chain_steps()
+        if not steps or rows < self.RUN_BOX_ROWS:
+            return canvas
+        total = len(steps)
+        done = min(len(getattr(self.remote, "_run_done", [])), total)
+        focus = done if done < total else total - 1
+        if screen_height is None:
+            focus_top = (rows - self.RUN_BOX_ROWS) // 2
+        else:
+            # Центр всего экрана, а не только области под шапкой: шапка
+            # съедает верхние строки, и текущий шаг иначе уезжает вниз.
+            focus_top = ((screen_height - 1) // 2
+                         - self.RUN_BOX_ROWS // 2 - screen_top)
+            focus_top = max(0, min(rows - self.RUN_BOX_ROWS, focus_top))
+        unit = self.RUN_BOX_ROWS + self.RUN_BOX_GAP
+        visible: list[tuple[int, int]] = []
+        # Наверх уходят только целиком помещающиеся рамки: обрезанная
+        # половинка выглядела бы как ошибка отрисовки.
+        for index in range(focus, -1, -1):
+            top = focus_top - (focus - index) * unit
+            if top < 0:
+                break
+            visible.append((index, top))
+        for index in range(focus + 1, total):
+            top = focus_top + (index - focus) * unit
+            if top + self.RUN_BOX_ROWS > rows:
+                break
+            visible.append((index, top))
+        for index, top in visible:
+            if index < done:
+                state = "done"
+            elif index == focus and done < total:
+                state = "current"
+            else:
+                state = "future"
+            box = self._run_box(steps[index], index + 1, total, width, state)
+            for offset, line in enumerate(box):
+                canvas[top + offset] = self._center_run_line(line, width)
+        return canvas
+
+    def _run_box(self, step: Step, number: int, total: int, width: int,
+                 state: str) -> list[str]:
+        """Одна рамка шага: серая — сделан, жёлтая — сейчас, голубая — дальше."""
+        box_width = max(14, min(self.RUN_BOX_MAX, width - 6))
+        inner = box_width - 2
+        if state == "current":
+            left_top, right_top, left_bottom, right_bottom = "╔", "╗", "╚", "╝"
+            horizontal, vertical = "═", "║"
+            style, mark = "\x1b[1;33m", "▶"
+        elif state == "done":
+            left_top, right_top, left_bottom, right_bottom = "┌", "┐", "└", "┘"
+            horizontal, vertical = "─", "│"
+            style, mark = "\x1b[2;37m", "✓"
+        else:
+            left_top, right_top, left_bottom, right_bottom = "┌", "┐", "└", "┘"
+            horizontal, vertical = "─", "│"
+            style, mark = "\x1b[36m", " "
+        title = _truncate(f" {number}/{total} ", max(1, inner - 1))
+        top = (left_top + horizontal + title
+               + horizontal * max(0, inner - 1 - len(title)) + right_top)
+        bottom = left_bottom + horizontal * inner + right_bottom
+        text = _truncate(f"{mark} {self._run_caption(step)}", max(1, inner - 2))
+        body = vertical + " " + text.ljust(inner - 2) + " " + vertical
+        return [f"{style}{line}\x1b[0m" for line in (top, body, bottom)]
+
+    @staticmethod
+    def _center_run_line(line: str, width: int) -> str:
+        """Поставить рамку шага по центру экрана."""
+        pad = max(0, (width - _display_width(line)) // 2)
+        return " " * pad + line
 
     def _wasd_art(self, width: int, height: int) -> list[str]:
         """Схема WASD: четыре квадрата перевёрнутой буквой T.
@@ -1789,7 +1988,18 @@ class Tui:
         if remote.key_state:
             parts.append("key-state")
         if remote.mode == "run" and remote._run_total:
-            parts.append(f"{remote._run_step}/{remote._run_total}")
+            plan = getattr(remote, "_run_plan", None)
+            if plan is not None and plan.repeat > 1:
+                done = len(getattr(remote, "_run_done", []))
+                total = remote._run_total * plan.repeat
+                shown = min(total, done + 1)  # текущий/следующий шаг, 1-based
+                parts.append(f"{shown}/{total}")
+                parts.append(f"×{plan.repeat}")
+            else:
+                step = max(1, min(remote._run_step, remote._run_total))
+                parts.append(f"{step}/{remote._run_total}")
+            if remote._run_paused:
+                parts.append(tr("пауза", "paused"))
         name = COLOR_NAMES.get(remote.led_color)
         if name:
             parts.append(tr(f"свет: {name[0]}", f"light: {name[1]}"))
@@ -1954,6 +2164,7 @@ class Remote:
         self._run_abort: str | None = None  # remote | editor | partial
         self._run_step = 0
         self._run_total = 0
+        self._run_planned = 0.0                 # секунд в плане (с повторами)
         self._run_rep = 1                       # текущий круг (1-based)
         self._run_done: list[Step] = []        # шаги, проеханные полностью
         self._run_current: Step | None = None  # шаг, на котором стоим сейчас
@@ -3919,6 +4130,17 @@ class Remote:
         self.speed = plan.speed
         self._run_paused = False
         self._run_abort = None
+        # Экран прогона может перерисоваться до первого тика _run_worker:
+        # показываем начало маршрута, а не хвост предыдущего прогона.
+        self._run_total = len(plan.steps)
+        self._run_planned = (sum(self._run_editor._step_seconds(s)
+                                 for s in plan.steps)
+                             * max(1, int(plan.repeat or 1)))
+        self._run_step = 0
+        self._run_rep = 1
+        self._run_done = []
+        self._run_current = None
+        self._run_progress = 0.0
         self.mode = "run"
         self._run_task = asyncio.create_task(self._run_worker())
 
@@ -3993,6 +4215,7 @@ class Remote:
         repeat = plan.repeat
         speed = plan.speed
         planned = sum(editor._step_seconds(s) for s in steps) * repeat
+        self._run_planned = planned
         journal_name = (tr("(разово)", "(one-time)")
                         if plan.source == "once" else None)
         prev_led = self.led_color
@@ -4054,15 +4277,20 @@ class Remote:
                             self._run_abort = "remote"
                             raise _RunAbort
                     elif step.kind == "blink":
+                        blink_done = 0.0
                         for _ in range(step.value):
                             if not await self._call(self.robot.all_leds, Color.OFF):
                                 self._run_abort = "remote"
                                 raise _RunAbort
                             await self._sleep_checked(self.blink_time)
+                            blink_done += self.blink_time
+                            self._run_progress = blink_done
                             if not await self._call(self.robot.all_leds, run_led):
                                 self._run_abort = "remote"
                                 raise _RunAbort
                             await self._sleep_checked(self.blink_time)
+                            blink_done += self.blink_time
+                            self._run_progress = blink_done
                     elif step.kind == "speed":
                         speed = max(SPEED_MIN, min(SPEED_MAX, step.value))
                         self.speed = speed
