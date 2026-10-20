@@ -337,7 +337,7 @@ colour comes back.
 # 7. Your first program
 
 A program is a list of steps: drive, turn, wait, blink, change the
-colour. You collect them in the program mode (press `p`).
+colour. You collect them in the program mode (`p`), or once — `o`.
 
 | Keys | A program step |
 |---|---|
@@ -584,6 +584,9 @@ Anything after `#` is a comment: the remote does not read it. Big and
 small letters, `ё` and `е`, commas and `×` are all forgiven. And it
 understands English and Russian words at once.
 
+A file loads into the one-time program the same way: `o`, then `g`.
+The remote says “loaded one-time” and leaves the `p` program alone.
+
 <div class="mission">
 **Challenge “Out and back by file”.** Collect the square, save it
 with `f` as `square2.txt`, clear it (`x`) and load it again with `g`.
@@ -795,6 +798,9 @@ over: the robot stands where it started. Want the whole program —
 press `Enter` and it drives from the very beginning (the steps never
 change).
 
+If it was a one-time program (`o`), it is already gone after the
+return: `Enter` and `r`/`t` use the `p` program again.
+
 <div class="tip">
 The return is a normal run: every step of it shows in the `[run]`
 lines, and `space` pauses it again. The light after the return is
@@ -966,6 +972,7 @@ factory settings: it recreates them on the next launch.
 * **The way back** — the robot drives the same route from the end (`r`, `t`, section 12, page {{page:12}}).
 * **Step** — one action of a program: drive, turn, blink (section 7, page {{page:7}}).
 * **Program** — a list of steps the robot performs by itself (section 7, page {{page:7}}).
+* **One-time program** — collected with `o`: not saved, lives until the first run and disappears after it (section 7, page {{page:7}}).
 * **Run** — performing the program from start to finish (section 6, page {{page:6}}).
 * **Repeat** — how many times the whole program runs (`*` or `repeat`, section 8, page {{page:8}}).
 * **Hold** — the mode where the robot drives while you hold the key (section 4, page {{page:4}}).
@@ -1015,6 +1022,7 @@ factory settings: it recreates them on the next launch.
 | `b` `B` | blink |
 | `v` `V` | motor 3: forward / backward (a switch) |
 | `p` `P` | program mode |
+| `o` | one-time program: not saved, gone after the run |
 | `Enter` | drive the program: the last macro or a file |
 | `Shift+Enter` | the same, but without pauses |
 | `r` `t` | drive the route back: backwards / turned around |
@@ -1053,8 +1061,8 @@ blink 2
 
 ```
 q connect · w a s d drive · space STOP · ] [ speed ·
-1…8 colour · b blink · p program · Enter run · r t back ·
-m macro · f g file · e editor · h help · Ctrl+C quit
+1…8 colour · b blink · p program · o one-time · Enter run ·
+r t back · m macro · f g file · e editor · h help · Ctrl+C quit
 ```
 
 **What to write in a program file:** `forward 4` · `back 2` ·

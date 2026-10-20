@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """Частичный реверс: r/t на паузе везут обратно только проеханную часть."""
+import asyncio
 import fcntl
 import importlib.util
 import os
@@ -180,6 +181,30 @@ check("reversed_steps с готовым steps= совпадает со стар�
       show(mod.reversed_steps(editor_for("вперёд 1с\nвлево 2с"), "back")) ==
       show(mod.reversed_steps(editor_for("вперёд 1с\nвлево 2с"), "back",
                               steps=steps_of("вперёд 1с\nвлево 2с"))))
+
+
+class ResumeStub:
+    """Мини-пульт: пауза уже нажата, частичный реверс ждёт остановки прогона."""
+    _run_paused = True
+    _run_abort = "partial"
+    _partial_pending = True
+
+    def _say(self, tag, text):
+        pass
+
+
+async def resume_pending():
+    stub = ResumeStub()
+    await mod.Remote._handle_run_key(stub, " ")
+    return stub
+
+
+stub = asyncio.run(resume_pending())
+check("пробел во время ожидания реверса продолжает прогон",
+      stub._run_paused is False, stub._run_paused)
+check("пробел во время ожидания реверса отменяет отложенный запуск",
+      stub._partial_pending is False and stub._run_abort is None,
+      (stub._partial_pending, stub._run_abort))
 
 # --------------------------------------------------------------------------- #
 # Часть B: пульт — пауза, потом r/t

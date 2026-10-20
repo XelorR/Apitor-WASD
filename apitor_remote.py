@@ -260,6 +260,7 @@ KEYMAP: dict[str, str] = {
     "v": "m3_fwd", "V": "m3_rev",  # мотор 3 (переехал с e: e — редактор)
     "e": "edit_external", "E": "edit_external",  # внешний $EDITOR — в любом режиме
     "p": "prog", "P": "prog",
+    "o": "once_prog", "O": "once_prog",  # разовая программа: не сохраняется
     "m": "record_macro", "M": "record_macro",  # m — начать; стоп — Esc или n
     # обратный проезд: строчная — с паузами, заглавная (с Shift) — без пауз
     "r": "rev_back", "R": "rev_back_np",
@@ -279,10 +280,11 @@ _LAYOUT = {
     "й": "q", "ц": "w", "у": "e", "ф": "a", "ы": "s", "в": "d", "е": "t",
     "р": "h", "д": "l", "л": "k", "о": "j", "ш": "i", "к": "r", "а": "f", "п": "g",
     "с": "c", "и": "b", "ч": "x", "з": "p", "ь": "m", "н": "y", "т": "n",
+    "щ": "o",  # разовая программа (латинская o)
     "х": "[", "ъ": "]", "ї": "]",  # х/ъ — русская раскладка, ї — украинская
     "Й": "Q", "Ц": "W", "У": "E", "Ф": "A", "Ы": "S", "В": "D", "Е": "T",
     "Р": "H", "Д": "L", "Л": "K", "О": "J", "Ш": "I", "К": "R", "А": "F", "П": "G",
-    "С": "C", "И": "B", "Ч": "X", "З": "P", "Ь": "M", "Н": "Y", "Т": "N",
+    "С": "C", "И": "B", "Ч": "X", "З": "P", "Ь": "M", "Н": "Y", "Т": "N", "Щ": "O",
     "Х": "[", "Ъ": "]", "Ї": "]",
     # Shift+[ и Shift+] (US): скорость — не редкость нажать их с зажатым
     # Shift (он же буст), поэтому принимаем и фигурные скобки.
@@ -524,18 +526,26 @@ class RunPlan:
     rev — None (обычный прогон), "back" (обратно задним ходом) или "front"
     (робота развернули рукой); drop_pauses — прогон без пауз;
     partial — реверс только проеханной части (r/t на паузе).
+
+    editor — чей это маршрут (обычная программа или разовая), source —
+    "editor" или "once": по нему прогон берёт длительности шагов, а после
+    разового прогона чистит разовую программу.
     """
-    __slots__ = ("steps", "speed", "repeat", "rev", "drop_pauses", "partial")
+    __slots__ = ("steps", "speed", "repeat", "rev", "drop_pauses", "partial",
+                 "editor", "source")
 
     def __init__(self, steps: list[Step], speed: int, repeat: int,
                  rev: str | None = None, drop_pauses: bool = False,
-                 partial: bool = False) -> None:
+                 partial: bool = False, editor=None,
+                 source: str = "editor") -> None:
         self.steps = steps
         self.speed = speed
         self.repeat = repeat
         self.rev = rev
         self.drop_pauses = drop_pauses
         self.partial = partial
+        self.editor = editor
+        self.source = source
 
 
 class ProgramEditor:
@@ -1443,23 +1453,67 @@ class Tui:
 
     # -- сборка кадра -------------------------------------------------------- #
     def _render(self, width: int, height: int) -> list[str]:
-        program = self._program_line()
         prompt = self.remote.prompt is not None
         # Шапка — постоянный баннер: состояние (строка 1) и клавиши текущего
-        # режима (строки 2+); снизу — строка программы и приглашение ввода.
+        # режима (строки 2+); снизу — программа и приглашение ввода.
         banner = self._mode_banner(width)
-        fixed = 1 + len(banner) + (1 if program else 0)  # строка состояния + баннер
+        block = self._program_block(width)
+        # На совсем низком экране рамка не помещается — оставляем одну строку.
+        need = 1 + len(banner) + len(block) + (1 if prompt else 0) + 1
+        if len(block) > 1 and height < need:
+            line = self._program_line()
+            block = ([f"\x1b[2m{_truncate(line, width)}\x1b[0m"]
+                     if line else [])
+        fixed = 1 + len(banner) + len(block)  # строка состояния + баннер
         log_rows = max(1, height - fixed - (1 if prompt else 0))
         log = self._log_lines(width)[-log_rows:]
         rows = [self._bar(self._status_line(), width, "7")]
         rows += [self._bar(line, width, "2") for line in banner]
         rows += [""] * max(0, log_rows - len(log))  # лог растёт снизу
         rows += log
-        if program:
-            rows.append(f"\x1b[2m{_truncate(program, width)}\x1b[0m")
+        rows += block
         if prompt:
             rows.append(self._bar(self._prompt_line(), width, "7"))
         return rows
+
+    def _program_block(self, width: int) -> list[str]:
+        """Программа в рамке — в режимах программы и разовой программы.
+
+        Рамка всегда на месте, даже когда шагов нет: в ней видно скорость,
+        число шагов и место, куда ляжет следующий шаг. В остальных режимах
+        (пульт, прогон, запись макроса) — прежняя одна строка.
+        """
+        remote = self.remote
+        if remote.mode not in ("editor", "once"):
+            line = self._program_line()
+            return ([f"\x1b[2m{_truncate(line, width)}\x1b[0m"] if line else [])
+        editor = remote.once_editor if remote.mode == "once" else remote.editor
+        title = (tr("разовая программа", "one-time program")
+                 if remote.mode == "once" else tr("программа", "program"))
+        n = len(editor.steps)
+        count = (f"{n}/{editor.max_steps} {steps_word(n)}"
+                 if editor.max_steps else f"{n} {steps_word(n)}")
+        status = (f"{title} · {count} · ~{secs_text(editor.estimate())} "
+                  f"{tr('с', 's')} · {tr('скор.', 'speed')} {editor.speed}")
+        if editor.repeat > 1:
+            status += f" · {tr('повтор', 'repeat')} {editor.repeat}"
+        status = _truncate(status, max(1, width - 5))
+        top = (f"\x1b[36m┌─ \x1b[1;36m{status}\x1b[0;36m "
+               + "─" * max(0, width - 5 - len(status))
+               + "┐\x1b[0m")
+        inner = max(1, width - 2)
+        if editor.steps:
+            words = [step_text(step) for step in editor.steps]
+            if len(words) > 10:
+                words = [f"…+{len(words) - 10}"] + words[-10:]
+            body = " · ".join(words)
+        else:
+            body = tr("(пусто)", "(empty)")
+        body = _truncate(body + " ▏", inner)
+        body_row = (f"\x1b[36m│\x1b[1;37m{body.ljust(inner)[:inner]}"
+                    f"\x1b[0;36m│\x1b[0m")
+        bottom = f"\x1b[36m└" + "─" * inner + "┘\x1b[0m"
+        return [top, body_row, bottom]
 
     def _mode_banner(self, width: int) -> list[str]:
         """Баннер шапки: какой сейчас режим и какие в нём клавиши."""
@@ -1468,6 +1522,8 @@ class Tui:
             mode = tr("запись макроса", "recording a macro")
         elif remote.mode == "editor":
             mode = tr("режим программы", "program mode")
+        elif remote.mode == "once":
+            mode = tr("разовая программа", "one-time program")
         elif remote.mode == "run":
             mode = tr("прогон", "run")
         else:
@@ -1483,9 +1539,14 @@ class Tui:
         remote = self.remote
         link = (tr("подключён", "connected") if remote._is_connected()
                 else tr("нет связи", "no link"))
-        # В редакторе ] и [ меняют скорость программы — её и показываем,
+        # В редакторах ] и [ меняют скорость программы — её и показываем,
         # иначе в шапке «ничего не происходит».
-        speed = remote.editor.speed if remote.mode == "editor" else remote.speed
+        if remote.mode == "editor":
+            speed = remote.editor.speed
+        elif remote.mode == "once":
+            speed = remote.once_editor.speed
+        else:
+            speed = remote.speed
         parts = [f"Apitor {remote.profile.name}", link,
                  tr(f"скор. {speed}", f"speed {speed}")
                  + ("+" if remote._boost_speed is not None else "")]
@@ -1493,8 +1554,12 @@ class Tui:
             parts.append(tr("круиз-контроль", "cruise") if remote.latched
                          else tr("удержание", "hold"))
         else:
-            parts.append(tr("программа", "program") if remote.mode == "editor"
-                         else tr("прогон", "run"))
+            if remote.mode == "editor":
+                parts.append(tr("программа", "program"))
+            elif remote.mode == "once":
+                parts.append(tr("разово", "one-time"))
+            else:
+                parts.append(tr("прогон", "run"))
         if remote.recording:
             parts.append(tr(f"запись {len(remote.macro.steps)}",
                             f"rec {len(remote.macro.steps)}"))
@@ -1517,6 +1582,14 @@ class Tui:
                           "[rec] … do something (Esc or n — stop)")
             text = " · ".join(step_text(step) for step in steps[-8:])
             return f"[rec] {text} ({len(steps)} {steps_word(len(steps))})"
+        if remote.mode == "once":
+            return remote.once_editor.line()
+        if remote.mode == "run" and remote._run_source == "once":
+            steps = remote.once_editor.steps
+            n = len(steps)
+            text = " · ".join(step_text(step) for step in steps[-8:])
+            return tr(f"[разово] {text} ({n} {steps_word(n)})",
+                      f"[one-time] {text} ({n} {steps_word(n)})")
         if not remote.editor.steps:
             # В редакторе строка видна всегда (в ней скорость: ] и [ должны
             # давать отклик и на пустой программе).
@@ -1638,11 +1711,22 @@ class Remote:
             pause_time=self.pause_time, blink_time=self.blink_time,
             max_steps=self.max_steps, speed=self.speed,
         )
+        # Разовая программа (o): тот же редактор, но живёт отдельно, не
+        # сохраняется в файл/черновик и исчезает после прогона. Обычную
+        # программу (p), макрос и загруженный файл она не трогает.
+        self.once_editor = ProgramEditor(
+            step_time=self.step_time, turn_time=self.turn_time,
+            pause_time=self.pause_time, blink_time=self.blink_time,
+            max_steps=self.max_steps, speed=self.speed,
+        )
         self.macro = MacroRecorder()  # запись макроса (m … Esc)
         self.recording = False
         self._rec_shown = 0           # сколько шагов макроса уже показано в логе
         self._run_task: asyncio.Task | None = None
         self._run_plan: RunPlan | None = None  # что именно запущено (шаги, повтор, вид)
+        self._run_editor = self.editor      # чей маршрут выполняется (обычный/разовый)
+        self._run_source = "editor"         # editor | once
+        self._partial_pending = False       # ждём остановки прогона для частичного реверса
         self._run_paused = False
         self._run_abort: str | None = None  # remote | editor | partial
         self._run_step = 0
@@ -2347,6 +2431,8 @@ class Remote:
             )
         if self.mode == "editor":
             return self._prog_hint()
+        if self.mode == "once":
+            return self._once_hint()
         if self.mode == "run":
             return tr("пробел — пауза/продолжить · на паузе r/t — обратно по проеханному · "
                       "Esc — стоп · p — редактор программы",
@@ -2354,10 +2440,10 @@ class Remote:
                       "Esc — stop · p — program editor")
         return tr("q — подключиться · Shift+Q — отключиться · w/a/s/d — ехать · "
                   "Enter — пуск · пробел — стоп · m — макрос · p — программа · "
-                  "r/t — обратно · h — все клавиши · Ctrl+C — выход",
+                  "o — разово · r/t — обратно · h — все клавиши · Ctrl+C — выход",
                   "q — connect · Shift+Q — disconnect · w/a/s/d — drive · "
                   "Enter — run · space — stop · m — macro · p — program · "
-                  "r/t — drive back · h — all keys · Ctrl+C — quit")
+                  "o — one-time · r/t — drive back · h — all keys · Ctrl+C — quit")
 
     def _print_lines(self, lines) -> None:
         """Напечатать готовые строки (справка): в TUI они идут в лог."""
@@ -2393,6 +2479,9 @@ class Remote:
         if self.mode == "editor":
             self._print_prog_help()
             return
+        if self.mode == "once":
+            self._print_once_help()
+            return
         if self.mode == "run":
             self._print_run_help()
             return
@@ -2417,6 +2506,8 @@ class Remote:
                 "  v / V         motor 3 (accessory): forward / back — toggle",
                 "  e / E         edit the program in $EDITOR (remote or editor mode)",
                 "  p             program mode: enter steps, run, files",
+                "  o             one-time program: like p, but not saved and gone",
+                "                after the run (the p program is not touched)",
                 "  m / n         record a macro / stop it (m starts, Esc or n — stop)",
                 "                (actions are timed, pauses become waits)",
                 "  x             clear the program (stay in the current mode)",
@@ -2460,6 +2551,8 @@ class Remote:
                 "  v / V         мотор 3 (аксессуар, если есть): вперёд / назад — тумблер",
                 "  e / E         править программу во внешнем $EDITOR (в обоих режимах)",
                 "  p             режим программы: набор шагов, запуск, файлы",
+                "  o             разовая программа: как p, но не сохраняется и",
+                "                исчезает после прогона (программу из p не трогает)",
                 "  m / n         записать макрос / закончить запись (m начинает, "
                 "Esc или n — стоп)",
                 "                (действия записываются с секундами, паузы — как ожидание)",
@@ -2508,6 +2601,7 @@ class Remote:
                 "  r / R / t / T drive the route back: backwards / robot turned",
                 "                (capitals — the same without pauses)",
                 "  f / g         save / load a program file",
+                "  o             one-time program (like p, but not saved)",
                 "  Esc           back to remote (the program stays)",
                 "  h, ?          this help (Ctrl+C — quit)",
             )
@@ -2531,8 +2625,51 @@ class Remote:
                 "  r / R / t / T проехать маршрут обратно: задним ходом / развернув",
                 "                робота (заглавные — то же самое, но без пауз)",
                 "  f / g         сохранить / загрузить программу",
+                "  o             разовая программа (как p, но не сохраняется)",
                 "  Esc           назад в пульт (программа остаётся)",
                 "  h, ?          эта справка (Ctrl+C — выход)",
+            )
+        self._print_lines(lines)
+
+    def _print_once_help(self) -> None:
+        self._say("help", tr("клавиши разовой программы:", "one-time program keys:"))
+        if LANG == "en":
+            lines = (
+                "  w a s d       steps: forward/back/left/right (arrows too)",
+                "  0..9          number of the last step; space — pause step",
+                "  c / b         color / blink step",
+                "  ] [ + - = _   speed; digits right after set it exactly: ]12",
+                "  *             repeat +1 (*5 — exactly 5 times)",
+                "  Backspace     delete the last step",
+                "  x             clear the one-time program",
+                "  g             load a file into the one-time program",
+                "  Enter         drive it once (Shift+Enter — without pauses)",
+                "  r / R / t / T drive it once in reverse (capitals — no pauses)",
+                "  Esc, o        back to remote (the program stays until it is run)",
+                "  p             the usual program (p program)",
+                "  f / e         not saved: use the p program for files/$EDITOR",
+                "  h, ?          this help (Ctrl+C — quit)",
+                "  after the run the one-time program disappears; the p program,",
+                "  the macro and the loaded file stay as they were",
+            )
+        else:
+            lines = (
+                "  w a s d       шаги: вперёд/назад/влево/вправо (стрелки тоже)",
+                "  0..9          число последнего шага; пробел — шаг «пауза»",
+                "  c / b         шаг «цвет» / «мигнуть»",
+                "  ] [ + - = _   скорость; цифры сразу после — точное значение: ]12",
+                "  *             повтор +1 (*5 — ровно 5 раз)",
+                "  Backspace     удалить последний шаг",
+                "  x             очистить разовую программу",
+                "  g             загрузить файл в разовую программу",
+                "  Enter         проехать один раз (Shift+Enter — без пауз)",
+                "  r / R / t / T проехать один раз обратно (заглавные — без пауз)",
+                "  Esc, o        назад в пульт (программа остаётся до прогона)",
+                "  p             обычная программа (режим p)",
+                "  f / e         не сохраняется: для файлов/$EDITOR — режим p",
+                "  h, ?          эта справка (Ctrl+C — выход)",
+                "  после прогона разовая программа исчезает; программа из p,",
+                "  макрос и загруженный файл остаются как были",
             )
         self._print_lines(lines)
 
@@ -2592,15 +2729,23 @@ class Remote:
         # кроме подключения/отключения/справки, молчат.
         if self.mode == "run" and action not in ("connect", "disconnect", "help"):
             return True
-        # В редакторе калибровка и мотор 3 не работают (чтобы не дёрнуть робота).
-        if self.mode == "editor" and action in ("test", "identify", "m3_fwd", "m3_rev",
-                                                "hold", "latch", "blink_led"):
+        # В редакторах (обычном и разовом) калибровка и мотор 3 не работают,
+        # чтобы не дёрнуть робота во время набора программы.
+        if self.mode in ("editor", "once") and action in (
+                "test", "identify", "m3_fwd", "m3_rev",
+                "hold", "latch", "blink_led"):
+            return True
+        if self.mode == "once" and action in ("save_prog", "edit_external"):
+            self._say("warn", tr(
+                "разовая программа не сохраняется — p — обычная программа",
+                "the one-time program is not saved — p — usual program",
+            ))
             return True
         # Во время записи макроса программа, файлы и калибровка не трогаются:
         # сначала надо остановить запись (Esc или n).
-        if self.recording and action in ("prog", "run", "save_prog", "load_prog",
-                                         "clear_prog", "test", "identify",
-                                         "rev_back", "rev_back_np",
+        if self.recording and action in ("prog", "once_prog", "run", "save_prog",
+                                         "load_prog", "clear_prog", "test",
+                                         "identify", "rev_back", "rev_back_np",
                                          "rev_front", "rev_front_np",
                                          "edit_external"):
             self._say("rec", tr("идёт запись макроса — сначала Esc или n (стоп)",
@@ -2638,6 +2783,8 @@ class Remote:
             self._on_latch(True)
         elif action == "prog":
             await self._on_prog_key()
+        elif action == "once_prog":
+            await self._on_once_key()
         elif action == "record_macro":
             await self._start_recording()
         elif action == "run":
@@ -2647,7 +2794,7 @@ class Remote:
         elif action == "save_prog":
             await self._open_save_prompt()
         elif action == "load_prog":
-            await self._open_load_prompt()
+            await self._open_load_prompt(target="once" if self.mode == "once" else "editor")
         elif action == "clear_prog":
             self._on_clear_prog()
         elif action == "test":
@@ -2677,6 +2824,22 @@ class Remote:
         if self._is_connected() and self.move != "stop":
             await self._stop(reason)
 
+    def _active_editor(self) -> ProgramEditor:
+        """Редактор текущего режима: разовый (once) или обычный (editor)."""
+        return self.once_editor if self.mode == "once" else self.editor
+
+    def _once_hint(self) -> str:
+        return tr(
+            "w/a/s/d — шаги · 0..9 — число · c цвет · b мигнуть · "
+            "пробел пауза · ] [ — скорость (]12) · * — повтор · Backspace — убрать · "
+            "Enter — проехать один раз (с Shift — без пауз) · r/R/t/T — обратно · "
+            "x — очистить · Esc или o — пульт · p — обычная программа · h — справка",
+            "w/a/s/d — steps · 0..9 — number · c color · b blink · "
+            "space pause · ] [ — speed (]12) · * — repeat · Backspace — delete · "
+            "Enter — drive once (Shift — without pauses) · r/R/t/T — back · "
+            "x — clear · Esc or o — remote · p — usual program · h — help",
+        )
+
     async def _on_prog_key(self) -> None:
         await self._stop_if_moving(tr("режим программы", "program mode"))
         self.editor.speed = self.speed
@@ -2686,6 +2849,26 @@ class Remote:
         self._say("prog", self.editor.line())
         self._say("hint", self._prog_hint())
 
+    async def _on_once_key(self) -> None:
+        """o: разовая программа — как p, но не сохраняется и живёт до прогона."""
+        if self.mode == "once":
+            await self._on_remote_key()
+            return
+        await self._stop_if_moving(tr("разовая программа", "one-time program"))
+        # Скорость — как в текущем редакторе или пульте: разовая программа
+        # начинает с того же места, но свою скорость держит отдельно.
+        if self.mode == "editor":
+            self.once_editor.speed = self.editor.speed
+        else:
+            self.once_editor.speed = self.speed
+        self.mode = "once"
+        self._say("prog", tr(
+            "разовая программа — не сохраняется и исчезнет после прогона",
+            "one-time program — not saved and gone after the run",
+        ))
+        self._say("prog", self.once_editor.line())
+        self._say("hint", self._once_hint())
+
     async def _on_remote_key(self) -> None:
         self.speed = self.editor.speed
         self.mode = "remote"
@@ -2694,6 +2877,12 @@ class Remote:
 
     def _on_clear_prog(self) -> None:
         """x: очистить программу и остаться в текущем режиме."""
+        if self.mode == "once":
+            self.once_editor.clear()
+            self._say("prog", tr("разовая программа очищена",
+                                 "one-time program cleared"))
+            self._say("prog", self.once_editor.line())
+            return
         self.editor.clear()
         self._draft_loaded = False
         draft = self.program_dir / DRAFT_FILE
@@ -2864,9 +3053,12 @@ class Remote:
         if key == "s-enter" or (key == "enter" and self._shift_held()):
             # Shift+Enter: прогон без пауз. Shift приходит из key-state,
             # а если его нет — из самого терминала (CSI-u, см. выше).
-            await self._on_run_key(drop_pauses=True)
+            await self._on_run_key(
+                drop_pauses=True,
+                source="once" if self.mode == "once" else "editor",
+            )
             return True
-        if self.mode == "editor" and await self._handle_editor_key(key):
+        if self.mode in ("editor", "once") and await self._handle_editor_key(key):
             return True
         if self.mode == "run" and await self._handle_run_key(key):
             return True
@@ -2876,20 +3068,41 @@ class Remote:
         return await self._handle_action(action)
 
     async def _handle_editor_key(self, key: str) -> bool:
-        result = self.editor.key(key, time.monotonic())
+        editor = self._active_editor()
+        source = "once" if self.mode == "once" else "editor"
+        result = editor.key(key, time.monotonic())
         if result is None:
             return False
-        if result.action in ("line", "note"):
+        if result.action == "line":
+            # В TUI живая строка и так в рамке: не засоряем лог копией.
+            if self.tui is not None and self.tui.active:
+                self.tui.redraw()
+            else:
+                self._say("prog", result.text)
+        elif result.action == "note":
             self._say("prog", result.text)
         elif result.action == "warn":
             self._say("warn", result.text)
         elif result.action == "run":
-            await self._start_program_run(from_editor=True)
+            await self._start_program_run(from_editor=True, source=source)
         elif result.action == "save":
-            await self._open_save_prompt()
+            if source == "once":
+                self._say("warn", tr(
+                    "разовая программа не сохраняется — "
+                    "нажмите p и наберите её там или f в режиме программы",
+                    "the one-time program is not saved — "
+                    "press p and enter it there, or f in program mode",
+                ))
+            else:
+                await self._open_save_prompt()
         elif result.action == "load":
-            await self._open_load_prompt()
+            await self._open_load_prompt(target=source)
         elif result.action == "remote":
+            if source == "once":
+                self._say("hint", tr(
+                    "разовая программа останется до прогона — o снова откроет её",
+                    "the one-time program stays until it is run — o opens it again",
+                ))
             await self._on_remote_key()
         return True
 
@@ -2903,13 +3116,21 @@ class Remote:
                     "space — resume · r/t — drive back what was done · Esc — stop",
                 ))
             else:
+                # Пауза снята до того, как старый прогон успел остановиться:
+                # отменяем отложенный частичный реверс, иначе он стартовал бы
+                # поверх только что продолженного прогона.
+                if self._run_abort == "partial":
+                    self._run_abort = None
+                self._partial_pending = False
                 self._say("run", tr("продолжаю", "resuming"))
             return True
         if key == "esc":
             self._run_abort = "remote"  # Esc: прервать и вернуться в пульт
+            self._partial_pending = False
             return True
         if key == "p":
             self._run_abort = "editor"  # P: прервать и перейти в режим программы
+            self._partial_pending = False
             return True
         if key in ("r", "R", "t", "T"):
             await self._partial_reverse(key)
@@ -2924,10 +3145,19 @@ class Remote:
                 "to drive back what was done, pause first (space), then r or t",
             ))
             return
+        if self._partial_pending:
+            self._say("hint", tr(
+                "уже останавливаю прогон и поворачиваю обратно",
+                "already stopping the run and turning back",
+            ))
+            return
         mode = "back" if key in ("r", "R") else "front"
         drop_pauses = key.isupper()
+        # Чей прогон — той программы и обратный маршрут (обычная или разовая).
+        source = self._run_source
+        editor = self._run_editor if source == "once" else self.editor
         steps = partial_reverse_steps(
-            self._run_done, self.editor, mode,
+            self._run_done, editor, mode,
             current=self._run_current, used=self._run_progress,
             drop_pauses=drop_pauses,
             base_light=NUMBER_BY_COLOR.get(self._run_led),
@@ -2938,29 +3168,59 @@ class Remote:
                 "nothing to drive back: the robot has not moved yet",
             ))
             return
+        plan = RunPlan(steps, editor.speed, 1, mode,
+                       drop_pauses=drop_pauses, partial=True,
+                       editor=editor, source=source)
         # Останавливаем текущий прогон и запускаем встречный по проеханному.
         self._run_abort = "partial"
+        self._partial_pending = True
+        self._say("run", tr(
+            "останавливаю прогон — сейчас повезу обратно по проеханному",
+            "stopping the run — driving back over what was done",
+        ))
         task = self._run_task
-        if task is not None:
-            try:
-                await asyncio.wait_for(task, 3.0)
-            except asyncio.TimeoutError:
-                # Прогон не отозвался (зависший вызов BLE): снимаем его, чтобы
-                # пульт не остался в режиме прогона навсегда.
-                self._run_task = None
-                self._run_plan = None
-                self._run_abort = None
-                self._run_paused = False
-                self.mode = "remote"
-                self._say("warn", tr(
-                    "прогон не остановился — сброшен; проверьте робота",
-                    "the run did not stop — it was reset; check the robot",
-                ))
+        if task is None or task.done():
+            self._launch_run(plan)
+            return
+        # Ждём остановки в фоне: пульт отвечает на клавиши, а не замирает
+        # на все три секунды, пока старый прогон гасит моторы и свет.
+        asyncio.create_task(self._finish_partial(task, plan))
+
+    async def _finish_partial(self, task: asyncio.Task, plan: RunPlan) -> None:
+        """Дождаться остановки старого прогона и запустить встречный."""
+        try:
+            await asyncio.wait_for(task, 3.0)
+        except asyncio.TimeoutError:
+            # Прогон не отозвался (зависший вызов BLE): снимаем его, чтобы
+            # пульт не остался в режиме прогона навсегда.
+            if not self._partial_pending:
                 return
-            except Exception:  # noqa: BLE001 — прогон уже завершился сам
-                pass
-        self._launch_run(RunPlan(steps, self.editor.speed, 1, mode,
-                                 drop_pauses=drop_pauses, partial=True))
+            self._run_task = None
+            self._run_plan = None
+            self._run_abort = None
+            self._run_paused = False
+            self._partial_pending = False
+            self._run_source = "editor"
+            self._run_editor = self.editor
+            self.mode = "remote"
+            self._say("warn", tr(
+                "прогон не остановился — сброшен; проверьте робота",
+                "the run did not stop — it was reset; check the robot",
+            ))
+            return
+        except Exception:  # noqa: BLE001 — прогон уже завершился сам
+            pass
+        if not self._partial_pending:
+            # Esc или другой запуск отменил возврат, пока ждали остановки.
+            return
+        if not self._is_connected():
+            self._partial_pending = False
+            self._say("warn", tr(
+                "связь с роботом потеряна — обратно не поехали",
+                "the robot is no longer connected — did not drive back",
+            ))
+            return
+        self._launch_run(plan)
 
     # -- файлы программы ------------------------------------------------------ #
     def _prompt_write(self, text: str) -> None:
@@ -3013,7 +3273,8 @@ class Remote:
         self._say("save", tr(f"сохранено: {path} ({n} {steps_word(n)})",
                              f"saved: {path} ({n} {steps_word(n)})"))
 
-    def load_program_file(self, path: Path, announce: bool = True) -> bool:
+    def load_program_file(self, path: Path, announce: bool = True,
+                          target: str = "editor") -> bool:
         try:
             text = path.read_text("utf-8")
         except OSError as exc:
@@ -3028,7 +3289,27 @@ class Remote:
                 self._say("err", tr(f"…и ещё {len(errors) - 5} ошибок",
                                     f"…and {len(errors) - 5} more errors"))
             return False
-        self.editor.set_program(steps, repeat, speed)
+        editor = self.once_editor if target == "once" else self.editor
+        editor.set_program(steps, repeat, speed)
+        if target == "once":
+            # Разовая программа не становится «последней»: имя и скорость
+            # обычной программы остаются как были.
+            if announce:
+                n = len(steps)
+                self._say("load", tr(
+                    f"загружено разово: {path.name} "
+                    f"({n} {steps_word(n)} · скор. {editor.speed})",
+                    f"loaded one-time: {path.name} "
+                    f"({n} {steps_word(n)} · speed {editor.speed})",
+                ))
+                if self.mode == "once":
+                    self._say("prog", editor.line())
+                else:
+                    self._say("hint", tr(
+                        "o — открыть разовую программу · Enter — проехать один раз",
+                        "o — open the one-time program · Enter — drive once",
+                    ))
+            return True
         self.speed = self.editor.speed
         self.program_name = path.name
         if announce:
@@ -3044,7 +3325,7 @@ class Remote:
                                      "Enter — run · r/t — drive back · p — editor"))
         return True
 
-    async def _open_load_prompt(self) -> None:
+    async def _open_load_prompt(self, target: str = "editor") -> None:
         await self._stop_if_moving(tr("загрузка программы", "loading a program"))
         files: list[Path] = []
         if self.program_dir.is_dir():
@@ -3065,7 +3346,7 @@ class Remote:
             self._say("load", tr(f"…и ещё {len(files) - len(shown)}",
                                  f"…and {len(files) - len(shown)} more"))
         self.prompt = {"kind": "load", "files": shown, "text": "",
-                       "title": tr("номер", "number")}
+                       "target": target, "title": tr("номер", "number")}
         self._prompt_write(f"[load] {tr('номер', 'number')}: ")
 
     def _describe_file(self, path: Path) -> str:
@@ -3131,8 +3412,9 @@ class Remote:
                 files = prompt["files"]
                 if text.isdigit() and 1 <= int(text) <= len(files):
                     chosen = files[int(text) - 1]
+                    target = prompt.get("target", "editor")
                     self._prompt_end()
-                    self.load_program_file(chosen)
+                    self.load_program_file(chosen, target=target)
                 else:
                     self._prompt_end()
                     self._say("warn", tr("нет такого номера", "no such number"))
@@ -3149,12 +3431,13 @@ class Remote:
         return True
 
     # -- журнал и черновик ---------------------------------------------------- #
-    def _journal_write(self, result: str, steps: int, planned: float, actual: float) -> None:
+    def _journal_write(self, result: str, steps: int, planned: float, actual: float,
+                       name: str | None = None) -> None:
         if not self.journal:
             return
         try:
             stamp = time.strftime("%Y-%m-%d %H:%M:%S")
-            name = self.program_name or tr("(без имени)", "(unnamed)")
+            name = name or self.program_name or tr("(без имени)", "(unnamed)")
             line = (f"{stamp} · {name} · {steps} {steps_word(steps)} · "
                     f"{tr('план', 'plan')} {planned:.2f} {tr('с', 's')} · "
                     f"{tr('факт', 'actual')} {actual:.2f} {tr('с', 's')} · {result}")
@@ -3178,57 +3461,86 @@ class Remote:
             self._dbg(f"черновик не сохранился: {exc!r}")
 
     # -- выполнение программы ------------------------------------------------- #
-    async def _on_run_key(self, *, drop_pauses: bool = False) -> None:
+    async def _on_run_key(self, *, drop_pauses: bool = False,
+                          source: str | None = None) -> None:
         """Enter: выполнить программу (в пульте — «последнюю»: макрос или файл).
 
         drop_pauses — Shift+Enter: проехать без остановок (паузы выброшены).
+        source — "once" для разовой программы (по умолчанию — по режиму).
         """
-        if self.editor.is_empty():
-            self._say("warn", tr(
-                "программы нет — запишите макрос (m) или наберите шаги (p)",
-                "no program — record a macro (m) or enter steps (p)",
-            ))
+        source = source or ("once" if self.mode == "once" else "editor")
+        editor = self.once_editor if source == "once" else self.editor
+        if editor.is_empty():
+            if source == "once":
+                self._say("warn", tr(
+                    "разовая программа пуста — наберите шаги (o)",
+                    "the one-time program is empty — enter steps (o)",
+                ))
+            else:
+                self._say("warn", tr(
+                    "программы нет — запишите макрос (m) или наберите шаги (p)",
+                    "no program — record a macro (m) or enter steps (p)",
+                ))
             return
-        await self._start_program_run(from_editor=False, drop_pauses=drop_pauses)
+        await self._start_program_run(from_editor=False, drop_pauses=drop_pauses,
+                                      source=source)
 
     async def _on_reverse_key(self, action: str) -> None:
         """r/R и t/T: проехать маршрут обратно (r — задним ходом, t — передом).
 
         Заглавные (с Shift) — то же самое, но без пауз: маршрут проезжается
         без остановок. Реверс считается от текущей программы, сама программа
-        не меняется: Enter потом проедет её как обычно.
+        не меняется: Enter потом проедет её как обычно. В режиме разовой
+        программы реверс считается от неё и тоже исчезает после прогона.
         """
-        if self.editor.is_empty():
-            self._say("warn", tr(
-                "обратный проезд нечего выполнять — сначала запишите макрос (m) "
-                "или программу (p)",
-                "nothing to reverse — record a macro (m) or make a program (p) first",
-            ))
+        source = "once" if self.mode == "once" else "editor"
+        editor = self.once_editor if source == "once" else self.editor
+        if editor.is_empty():
+            if source == "once":
+                self._say("warn", tr(
+                    "разовая программа пуста — обращать нечего (наберите шаги)",
+                    "the one-time program is empty — nothing to reverse",
+                ))
+            else:
+                self._say("warn", tr(
+                    "обратный проезд нечего выполнять — сначала запишите макрос (m) "
+                    "или программу (p)",
+                    "nothing to reverse — record a macro (m) or make a program (p) first",
+                ))
             return
         mode = "back" if action.startswith("rev_back") else "front"
         await self._start_program_run(from_editor=False, rev=mode,
-                                      drop_pauses=action.endswith("_np"))
+                                      drop_pauses=action.endswith("_np"),
+                                      source=source)
 
     async def _start_program_run(self, *, from_editor: bool, rev: str | None = None,
-                                 drop_pauses: bool = False) -> None:
+                                 drop_pauses: bool = False,
+                                 source: str = "editor") -> None:
         if self._run_task is not None and not self._run_task.done():
             return
         if self.recording:
             self._say("rec", tr("идёт запись макроса — сначала Esc или n (стоп)",
                                 "a macro is being recorded — press Esc or n first"))
             return
-        if self.editor.is_empty():
+        editor = self.once_editor if source == "once" else self.editor
+        if editor.is_empty():
             if from_editor:
-                self._say("warn", tr("программа пуста — добавьте шаги (w/a/s/d)",
-                                     "the program is empty — add steps (w/a/s/d)"))
+                if source == "once":
+                    self._say("warn", tr(
+                        "разовая программа пуста — добавьте шаги (w/a/s/d)",
+                        "the one-time program is empty — add steps (w/a/s/d)",
+                    ))
+                else:
+                    self._say("warn", tr("программа пуста — добавьте шаги (w/a/s/d)",
+                                         "the program is empty — add steps (w/a/s/d)"))
             return
         if not self._is_connected():
             self._say("warn", tr("нет подключения — нажмите q",
                                  "not connected — press q"))
             return
-        steps = [Step(s.kind, s.value, s.seconds) for s in self.editor.steps]
+        steps = [Step(s.kind, s.value, s.seconds) for s in editor.steps]
         if rev is not None:
-            steps = reversed_steps(self.editor, rev, drop_pauses=drop_pauses,
+            steps = reversed_steps(editor, rev, drop_pauses=drop_pauses,
                                    base_light=NUMBER_BY_COLOR.get(self.led_color))
             if not steps:
                 self._say("warn", tr(
@@ -3243,14 +3555,17 @@ class Remote:
                                      "the program is all pauses — nothing to drive"))
                 return
         self._launch_run(RunPlan(
-            steps, self.editor.speed,
-            1 if rev is not None else max(1, self.editor.repeat),
-            rev, drop_pauses,
+            steps, editor.speed,
+            1 if rev is not None else max(1, editor.repeat),
+            rev, drop_pauses, editor=editor, source=source,
         ))
 
     def _launch_run(self, plan: RunPlan) -> None:
         """Запустить готовый план: прогон, реверс или его проеханную часть."""
         self._run_plan = plan
+        self._run_editor = plan.editor or self.editor
+        self._run_source = plan.source
+        self._partial_pending = False
         self.speed = plan.speed
         self._run_paused = False
         self._run_abort = None
@@ -3272,7 +3587,8 @@ class Remote:
             self._check_run()
             self._run_progress = duration - left  # для реверса проеханного
             if self._run_paused:
-                left = max(0.0, deadline - time.monotonic())
+                # left не пересчитываем: иначе пауза «съедала» бы остаток
+                # шага (за 2 с паузы пауза-шаг успевал закончиться).
                 await asyncio.sleep(self.RUN_TICK)
                 deadline = time.monotonic() + left
                 continue
@@ -3321,11 +3637,14 @@ class Remote:
     async def _run_worker(self) -> None:
         started = time.monotonic()
         plan = self._run_plan
+        editor = plan.editor or self.editor
         steps = plan.steps
         total = len(steps)
         repeat = plan.repeat
         speed = plan.speed
-        planned = sum(self.editor._step_seconds(s) for s in steps) * repeat
+        planned = sum(editor._step_seconds(s) for s in steps) * repeat
+        journal_name = (tr("(разово)", "(one-time)")
+                        if plan.source == "once" else None)
         prev_led = self.led_color
         run_led = self.led_color
         self._run_total = total
@@ -3350,6 +3669,8 @@ class Remote:
                 head += tr(" · реверс передом (робот развёрнут)", " · reversed (robot turned around)")
         elif steps_are_timed(steps):
             head += tr(" · макрос", " · macro")
+        if plan.source == "once":
+            head += tr(" · разово", " · one-time")
         if plan.drop_pauses:
             head += tr(" · без пауз", " · without pauses")
         if repeat > 1:
@@ -3390,10 +3711,10 @@ class Remote:
                         speed = max(SPEED_MIN, min(SPEED_MAX, step.value))
                         self.speed = speed
                     elif step.kind == "pause":
-                        await self._sleep_checked(self.editor._step_seconds(step))
+                        await self._sleep_checked(editor._step_seconds(step))
                     else:
                         await self._run_motion(
-                            step.kind, self.editor._step_seconds(step), speed
+                            step.kind, editor._step_seconds(step), speed
                         )
                     self._run_done.append(step)
                     self._run_current = None
@@ -3415,11 +3736,20 @@ class Remote:
                 f"готово: {total} {steps_word(total)} за {elapsed:.2f} с (план {planned:.2f} с)",
                 f"done: {total} {steps_word(total)} in {elapsed:.2f} s (planned {planned:.2f} s)",
             ))
-            self._say("hint", tr(
-                "Enter — ещё раз · r — назад · t — развернув робота · p — редактор",
-                "Enter — again · r — back · t — robot turned · p — editor",
-            ))
-            self._journal_write(tr("готово", "done"), total, planned, elapsed)
+            if plan.source == "once":
+                self._say("hint", tr(
+                    "разовая программа больше не в памяти · "
+                    "Enter — программа из p · p — редактор",
+                    "the one-time program is gone · "
+                    "Enter — the p program · p — editor",
+                ))
+            else:
+                self._say("hint", tr(
+                    "Enter — ещё раз · r — назад · t — развернув робота · p — редактор",
+                    "Enter — again · r — back · t — robot turned · p — editor",
+                ))
+            self._journal_write(tr("готово", "done"), total, planned, elapsed,
+                                name=journal_name)
         else:
             await self._led_flash(Color.RED, 0.35, prev_led)
             if self._run_abort == "editor":
@@ -3447,14 +3777,21 @@ class Remote:
                 ))
                 result = tr(f"прервано на шаге {self._run_step}/{total}",
                             f"aborted at step {self._run_step}/{total}")
-            self._journal_write(result, total, planned, elapsed)
+            self._journal_write(result, total, planned, elapsed,
+                                name=journal_name)
         # вернуть подсветку, как было до запуска
         self.led_color = prev_led
         if self._is_connected():
             await self._call(self.robot.all_leds, prev_led)
+        # Разовая программа исполнена (или прервана) и больше не нужна.
+        # При частичном реверсе её ещё доезжает встречный прогон — не чистим.
+        if plan.source == "once" and self._run_abort != "partial":
+            self.once_editor.clear()
         self._run_paused = False
         self._run_abort = None
         self._run_plan = None
+        self._run_source = "editor"
+        self._run_editor = self.editor
         self._run_task = None
 
     # -- потоки чтения клавиатуры -------------------------------------------- #

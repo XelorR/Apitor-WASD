@@ -263,6 +263,25 @@ check("точность прогона: 10 отрезков по 0.05 с без 
       abs(ten - 0.50) <= 0.03, ten)
 
 
+async def paused_measure():
+    """Пауза прогона не должна «съедать» остаток шага."""
+    stub = TimingStub()
+    stub._run_paused = True
+    task = asyncio.create_task(mod.Remote._sleep_checked(stub, 0.30))
+    await asyncio.sleep(0.5)
+    still_paused = not task.done()
+    stub._run_paused = False
+    t0 = time.monotonic()
+    await task
+    return still_paused, time.monotonic() - t0
+
+
+still_paused, rest = asyncio.run(paused_measure())
+check("пауза прогона: пауза-шаг не заканчивается сам", still_paused)
+check("пауза прогона: после продолжения — остаток шага (~0.30 с)",
+      abs(rest - 0.30) <= 0.05, rest)
+
+
 # --------------------------------------------------------------------------- #
 # Часть B: живой пульт (PTY + --simulate + key-state через FIFO)
 # --------------------------------------------------------------------------- #

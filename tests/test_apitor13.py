@@ -60,9 +60,34 @@ STEP_ROW = re.compile(r"^[\u2191\u2193\u2190\u2192\u2016\u2726\u25cf]")
 
 
 def prog_row(frame):
-    """Строка программы в кадре (начинается со значка шага) или пусто."""
+    """Содержимое рамки программы (начинается со значка шага) или пусто."""
     for number in sorted(frame):
-        if STEP_ROW.match(frame[number]):
+        row = frame[number]
+        if row.startswith("│"):
+            row = row[1:]
+            if row.endswith("│"):
+                row = row[:-1]
+        if STEP_ROW.match(row):
+            return row
+    return ""
+
+
+def prog_body(frame):
+    """Любое содержимое рамки программы (даже «(пусто)») или пусто."""
+    for number in sorted(frame):
+        row = frame[number]
+        if row.startswith("│"):
+            row = row[1:]
+            if row.endswith("│"):
+                row = row[:-1]
+            return row
+    return ""
+
+
+def prog_title(frame):
+    """Строка-заголовок рамки программы (число шагов, скорость) или пусто."""
+    for number in sorted(frame):
+        if frame[number].startswith("┌─") and "программа ·" in frame[number]:
             return frame[number]
     return ""
 
@@ -159,27 +184,34 @@ try:
     check("banner switches to program mode keys",
           ("режим программы:" in state.get(2, "") and "шаги" in state.get(2, "")), state.get(2, ""))
     check("mode segment shows программа", "программа" in state.get(1, ""), state.get(1, ""))
-    check("empty program -> no step row", prog_row(state) == "", state.get(23, ""))
-    check("empty program: bottom row shows the speed",
-          "пусто" in state.get(24, "") and "скор. 6" in state.get(24, ""), state.get(24, ""))
+    check("empty program -> empty frame body", prog_row(state) == "", state.get(23, ""))
+    check("empty program: frame title shows count and speed",
+          "0 шагов" in prog_title(state) and "скор. 6" in prog_title(state),
+          prog_title(state))
+    check("program frame is drawn",
+          any(row.startswith("┌─") for row in state.values())
+          and any(row.startswith("└") for row in state.values()), state)
 
     out = key("]")
     state = last_screen(out)
     check("] reaches the editor header", "скор. 7" in state.get(1, ""), state.get(1, ""))
-    check("] reaches the empty program row",
-          "пусто" in state.get(24, "") and "скор. 7" in state.get(24, ""), state.get(24, ""))
+    check("] reaches the empty program frame",
+          "скор. 7" in prog_title(state) and "пусто" in prog_body(state),
+          (prog_title(state), prog_body(state)))
     key("[", 0.4)
 
     key("w")
     out = key("w")
     state = last_screen(out)
-    check("program row shows ↑2 live", "↑2 (1 шаг" in prog_row(state), prog_row(state))
+    check("program frame shows ↑2 live", "↑2" in prog_row(state), prog_row(state))
+    check("program frame title counts the step",
+          "1 шаг" in prog_title(state), prog_title(state))
     check("no doubled [prog] tag in the program row", "[prog] [prog]" not in out, out)
 
     out = key("h")
     check("help goes to the log", "[help] клавиши режима программы:" in out, out)
     check("help lines keep their indentation",
-          "  w a s d       шаги: вперёд/назад/влево/вправо" in out, out)
+          "  o             разовая программа (как p, но не сохраняется)" in out, out)
     check("no doubled [help] tag in the log", "[help] [help]" not in out, out)
 
     out = key("F")
